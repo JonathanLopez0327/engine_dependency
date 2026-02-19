@@ -1,15 +1,23 @@
 import BaseService from './base.service.js';
+import { DEFAULT_ENDPOINTS, ENV_VARS, PROVIDERS } from '../constants.js';
 
 export class TestInformationService extends BaseService {
+    /**
+     * @param {object} config - Configuration object.
+     */
     constructor(config = {}) {
         super();
-        this.baseUrl = config.baseUrl || process.env.DATA_ENGINE_BASE_URL;
-        this.tokenEndpoint = config.tokenEndpoint || process.env.DATA_ENGINE_GENERATE_TOKEN;
-        this.testResultsEndpoint = config.testResultsEndpoint || '/api/test-results';
-        this.serviceAccount = config.serviceAccount || process.env.DATA_ENGINE_SERVICE_ACCOUNT;
-        this.servicePassword = config.servicePassword || process.env.DATA_ENGINE_SERVICE_PASSWORD;
+        this.baseUrl = config.baseUrl || process.env[ENV_VARS.BASE_URL];
+        this.tokenEndpoint = config.tokenEndpoint || process.env[ENV_VARS.TOKEN_ENDPOINT];
+        this.testResultsEndpoint = config.testResultsEndpoint || DEFAULT_ENDPOINTS.TEST_RESULTS;
+        this.serviceAccount = config.serviceAccount || process.env[ENV_VARS.SERVICE_ACCOUNT];
+        this.servicePassword = config.servicePassword || process.env[ENV_VARS.SERVICE_PASSWORD];
     }
 
+    /**
+     * Generates an authentication token.
+     * @returns {Promise<string|undefined>} The token or undefined if failed.
+     */
     async generateToken() {
         try {
             const response = await this.sendPOSTRequest(`${this.baseUrl}${this.tokenEndpoint}`, {
@@ -18,21 +26,26 @@ export class TestInformationService extends BaseService {
             });
             return response.data.token;
         } catch (error) {
-            console.log(`Error generando token para test results: ${error?.message || error}`);
+            console.error(`Error generando token para test results: ${error?.message || error}`);
         }
     }
 
+    /**
+     * Builds the payload for standard test results.
+     * @param {object} testInfo - The test information.
+     * @returns {object} The payload.
+     */
     buildTestPayload(testInfo) {
         return {
             testTitle: testInfo.title,
             testStatus: testInfo.status || testInfo.state,
             duration: testInfo.duration,
             testFile: testInfo.file,
-            testProject: process.env.PROJECT_NAME,
+            testProject: process.env[ENV_VARS.PROJECT_NAME],
             retries: (testInfo.retries || testInfo.retries?.length) ?? 0,
             retry: testInfo.retry ?? 0,
             tags: testInfo.tags || [],
-            environment: process.env.ENV,
+            environment: process.env[ENV_VARS.ENV],
             testInfo: {
                 title: testInfo.title,
                 expectedStatus: testInfo.expectedStatus || null,
@@ -40,80 +53,88 @@ export class TestInformationService extends BaseService {
                 timeout: testInfo.timeout || testInfo.timedOut,
                 errors: testInfo.errors || testInfo.err || null
             },
-            pipelineId: process.env.BUILD_BUILDID || null,
-            commitSha: process.env.BUILD_SOURCEVERSION || null,
-            branch: process.env.BUILD_SOURCEBRANCH || null,
-            runUrl: process.env.BUILD_BUILDID
-                ? `${process.env.SYSTEM_TEAMFOUNDATIONCOLLECTIONURI}${process.env.SYSTEM_TEAMPROJECT}/_build/results?buildId=${process.env.BUILD_BUILDID}`
+            pipelineId: process.env[ENV_VARS.BUILD_ID] || null,
+            commitSha: process.env[ENV_VARS.SOURCE_VERSION] || null,
+            branch: process.env[ENV_VARS.SOURCE_BRANCH] || null,
+            runUrl: process.env[ENV_VARS.BUILD_ID]
+                ? `${process.env[ENV_VARS.TEAM_FOUNDATION_COLLECTION_URI]}${process.env[ENV_VARS.TEAM_PROJECT]}/_build/results?buildId=${process.env[ENV_VARS.BUILD_ID]}`
                 : null,
-            provider: process.env.BUILD_BUILDID ? 'azure-devops' : null
+            provider: process.env[ENV_VARS.BUILD_ID] ? PROVIDERS.AZURE_DEVOPS : null
         };
     }
 
+    /**
+     * Builds the payload for WDIO test results.
+     * @param {object} testInfo - The test information.
+     * @returns {object} The payload.
+     */
     buildTestPayloadForWDIO(testInfo) {
         return {
             testTitle: testInfo.title,
             testStatus: testInfo.state,
             duration: testInfo.duration,
             testFile: testInfo.file,
-            testProject: process.env.PROJECT_NAME,
+            testProject: process.env[ENV_VARS.PROJECT_NAME],
             retries: testInfo.retries ?? 0,
             retry: testInfo.retry ?? 0,
             tags: testInfo.tags || [],
-            environment: process.env.ENV,
+            environment: process.env[ENV_VARS.ENV],
             testInfo: {},
-            pipelineId: null,
-            commitSha: null,
-            branch: null,
-            runUrl: null,
-            provider: null
+            pipelineId: "",
+            commitSha: "",
+            branch: "",
+            runUrl: "",
+            provider: ""
         };
     }
 
-    async sendTestResult(testInfo) {
+    /**
+     * Internal method to send test result.
+     * @param {object} payload - The payload to send.
+     * @param {string} testTitle - The title of the test for logging.
+     * @param {string} testStatus - The status of the test for logging.
+     * @returns {Promise<any>} The response data.
+     */
+    async _sendResult(payload, testTitle, testStatus) {
         if (!process.env.CI) return;
 
         try {
             const token = await this.generateToken();
             if (!token) {
-                console.log('No se pudo obtener el token, omitiendo envio de resultado de test');
+                console.error('No se pudo obtener el token, omitiendo envio de resultado de test');
                 return;
             }
 
-            const payload = this.buildTestPayload(testInfo);
             const response = await this.sendPOSTRequest(
                 `${this.baseUrl}${this.testResultsEndpoint}`,
                 payload,
                 { Authorization: `Bearer ${token}` }
             );
 
-            console.log(`Resultado de test enviado: ${testInfo.title} - ${testInfo.status}`);
+            console.log(`Resultado de test enviado: ${testTitle} - ${testStatus}`);
             return response?.data;
         } catch (error) {
-            console.log(`Error enviando resultado de test: ${error?.message || error}`);
+            console.error(`Error enviando resultado de test: ${error?.message || error}`);
         }
     }
 
+    /**
+     * Sends the test result.
+     * @param {object} testInfo - The test information.
+     * @returns {Promise<any>} The response data.
+     */
+    async sendTestResult(testInfo) {
+        const payload = this.buildTestPayload(testInfo);
+        return this._sendResult(payload, testInfo.title, testInfo.status || testInfo.state);
+    }
+
+    /**
+     * Sends the WDIO test result.
+     * @param {object} testInfo - The test information.
+     * @returns {Promise<any>} The response data.
+     */
     async sendWDIOTestResult(testInfo) {
-        try {
-
-            const token = await this.generateToken();
-            if (!token) {
-                console.log('No se pudo obtener el token, omitiendo envio de resultado de test');
-                return;
-            }
-
-            const payload = this.buildTestPayloadForWDIO(testInfo);
-            const response = await this.sendPOSTRequest(
-                `${this.baseUrl}${this.testResultsEndpoint}`,
-                payload,
-                { Authorization: `Bearer ${token}` }
-            );
-
-            console.log(`Resultado de test enviado: ${testInfo.title} - ${testInfo.status}`);
-            return response?.data;
-        } catch (error) {
-            console.log(`Error enviando resultado de test: ${error?.message || error}`);
-        }
+        const payload = this.buildTestPayloadForWDIO(testInfo);
+        return this._sendResult(payload, testInfo.title, testInfo.state);
     }
 }

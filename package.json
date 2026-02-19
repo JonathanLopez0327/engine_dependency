@@ -1,6 +1,6 @@
 {
   "name": "engine-dependency",
-  "version": "1.0.6",
+  "version": "2.0.0",
   "description": "Dependencia centralizada para envio de datos via API al servicio Data Engine",
   "type": "module",
   "main": "dist/cjs/index.cjs",

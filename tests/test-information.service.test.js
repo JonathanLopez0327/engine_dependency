@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TestInformationService } from '../src/services/test-information.service.js';
 
 const mockTestInfo = {
     title: 'Login exitoso',
     titlePath: ['Auth', 'Login', 'Login exitoso'],
     status: 'passed',
+    state: 'passed', // for WDIO
     duration: 3500,
     file: 'tests/auth/login.spec.js',
     project: { name: 'e2e-chrome' },
@@ -27,6 +28,13 @@ describe('TestInformationService', () => {
             serviceAccount: 'test@test.com',
             servicePassword: 'password'
         });
+        vi.spyOn(console, 'log').mockImplementation(() => { });
+        vi.spyOn(console, 'error').mockImplementation(() => { });
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        delete process.env.CI;
     });
 
     describe('constructor', () => {
@@ -64,7 +72,20 @@ describe('TestInformationService', () => {
 
             expect(payload.testTitle).toBe('Login exitoso');
         });
+    });
 
+    describe('buildTestPayloadForWDIO', () => {
+        it('debe construir el payload correctamente para WDIO', () => {
+            const payload = service.buildTestPayloadForWDIO(mockTestInfo);
+
+            expect(payload.testTitle).toBe('Login exitoso');
+            expect(payload.testStatus).toBe('passed');
+            expect(payload.duration).toBe(3500);
+            expect(payload.testFile).toBe('tests/auth/login.spec.js');
+            expect(payload.retries).toBe(0);
+            expect(payload.tags).toEqual(['@smoke']);
+            expect(payload.testInfo).toEqual({});
+        });
     });
 
     describe('generateToken', () => {
@@ -84,11 +105,11 @@ describe('TestInformationService', () => {
 
         it('debe retornar undefined cuando falla la peticion', async () => {
             vi.spyOn(service, 'sendPOSTRequest').mockRejectedValue(new Error('Network error'));
-            vi.spyOn(console, 'log').mockImplementation(() => { });
 
             const token = await service.generateToken();
 
             expect(token).toBeUndefined();
+            expect(console.error).toHaveBeenCalled();
         });
     });
 
@@ -107,7 +128,6 @@ describe('TestInformationService', () => {
             process.env.CI = 'true';
             vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
             vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 1 } });
-            vi.spyOn(console, 'log').mockImplementation(() => { });
 
             const result = await service.sendTestResult(mockTestInfo);
 
@@ -117,19 +137,42 @@ describe('TestInformationService', () => {
                 expect.any(Object),
                 { Authorization: 'Bearer mock-token' }
             );
-
-            delete process.env.CI;
         });
 
         it('debe retornar undefined si no obtiene token', async () => {
             process.env.CI = 'true';
             vi.spyOn(service, 'generateToken').mockResolvedValue(undefined);
-            vi.spyOn(console, 'log').mockImplementation(() => { });
 
             const result = await service.sendTestResult(mockTestInfo);
 
             expect(result).toBeUndefined();
+        });
+    });
+
+    describe('sendWDIOTestResult', () => {
+        it('debe no ejecutarse si CI no esta definido', async () => {
             delete process.env.CI;
+            vi.spyOn(service, 'generateToken');
+
+            const result = await service.sendWDIOTestResult(mockTestInfo);
+
+            expect(result).toBeUndefined();
+            expect(service.generateToken).not.toHaveBeenCalled();
+        });
+
+        it('debe enviar el resultado cuando CI esta activo', async () => {
+            process.env.CI = 'true';
+            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
+            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 1 } });
+
+            const result = await service.sendWDIOTestResult(mockTestInfo);
+
+            expect(result).toEqual({ id: 1 });
+            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
+                'https://api.test.com/api/test-results',
+                expect.any(Object),
+                { Authorization: 'Bearer mock-token' }
+            );
         });
     });
 });
