@@ -1,0 +1,45 @@
+{
+  "name": "engine-dependency",
+  "version": "1.0.6",
+  "description": "Dependencia centralizada para envio de datos via API al servicio Data Engine",
+  "type": "module",
+  "main": "dist/cjs/index.cjs",
+  "module": "dist/esm/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "clean": "node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true})\"",
+    "prebuild": "npm run clean",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "validate": "npm run lint && npm run test && npm run build",
+    "prepublishOnly": "npm run validate",
+    "example": "node examples/send-test-result.js"
+  },
+  "keywords": [
+    "data-engine",
+    "test-results",
+    "api-client"
+  ],
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "eslint": "^10.0.0",
+    "rollup": "^4.57.1",
+    "vitest": "^4.0.18"
+  }
+}
