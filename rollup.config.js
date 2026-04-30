@@ -20,9 +20,12 @@ const input = Object.fromEntries(
     sourceFiles.map(file => [file.replace('.js', ''), `src/${file}`])
 );
 
+const external = (id) => id.startsWith('node:');
+
 export default [
     {
         input,
+        external,
         output: {
             dir: 'dist/esm',
             format: 'esm',
@@ -32,6 +35,7 @@ export default [
     },
     {
         input,
+        external,
         output: {
             dir: 'dist/cjs',
             format: 'cjs',
