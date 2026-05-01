@@ -1,5 +1,6 @@
 export const DEFAULT_ENDPOINTS = {
-    TEST_RESULTS: '/api/test-results'
+    TEST_RESULTS: '/api/test-results',
+    K6_METRICS: '/api/k6-metrics'
 };
 
 export const ENV_VARS = {
@@ -9,6 +10,8 @@ export const ENV_VARS = {
     SERVICE_PASSWORD: 'DATA_ENGINE_SERVICE_PASSWORD',
     PROJECT_NAME: 'PROJECT_NAME',
     ENV: 'ENV',
+    SCENARIO_NAME: 'SCENARIO_NAME',
+    TEST_TYPE: 'TEST_TYPE',
     BUILD_ID: 'BUILD_BUILDID',
     SOURCE_VERSION: 'BUILD_SOURCEVERSION',
     SOURCE_BRANCH: 'BUILD_SOURCEBRANCH',

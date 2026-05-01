@@ -1,33 +1,13 @@
-import BaseService from './base.service.js';
+import { AuthenticatedService } from './authenticated.service.js';
 import { DEFAULT_ENDPOINTS, ENV_VARS, PROVIDERS } from '../constants.js';
 
-export class TestInformationService extends BaseService {
+export class TestInformationService extends AuthenticatedService {
     /**
      * @param {object} config - Configuration object.
      */
     constructor(config = {}) {
-        super();
-        this.baseUrl = config.baseUrl || process.env[ENV_VARS.BASE_URL];
-        this.tokenEndpoint = config.tokenEndpoint || process.env[ENV_VARS.TOKEN_ENDPOINT];
+        super(config);
         this.testResultsEndpoint = config.testResultsEndpoint || DEFAULT_ENDPOINTS.TEST_RESULTS;
-        this.serviceAccount = config.serviceAccount || process.env[ENV_VARS.SERVICE_ACCOUNT];
-        this.servicePassword = config.servicePassword || process.env[ENV_VARS.SERVICE_PASSWORD];
-    }
-
-    /**
-     * Generates an authentication token.
-     * @returns {Promise<string|undefined>} The token or undefined if failed.
-     */
-    async generateToken() {
-        try {
-            const response = await this.sendPOSTRequest(`${this.baseUrl}${this.tokenEndpoint}`, {
-                email: this.serviceAccount,
-                password: this.servicePassword
-            });
-            return response.data.token;
-        } catch (error) {
-            console.error(`Error generando token para test results: ${error?.message || error}`);
-        }
     }
 
     /**
