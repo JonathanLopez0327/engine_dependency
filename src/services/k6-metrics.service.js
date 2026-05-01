@@ -3,10 +3,33 @@ import readline from 'node:readline';
 import { AuthenticatedService } from './authenticated.service.js';
 import { DEFAULT_ENDPOINTS, ENV_VARS, PROVIDERS } from '../constants.js';
 
-const FULL_STATS = ['avg', 'min', 'max', 'med', 'p(90)', 'p(95)', 'p(99)'];
+const TREND_STATS = [
+    ['avg', 'avg'],
+    ['min', 'min'],
+    ['max', 'max'],
+    ['med', 'med'],
+    ['p90', 'p(90)'],
+    ['p95', 'p(95)'],
+    ['p99', 'p(99)']
+];
 
-const pickStats = (src, keys) =>
-    src ? Object.fromEntries(keys.map((k) => [k, src[k] ?? null])) : null;
+const flattenTrend = (src, prefix) => {
+    const out = {};
+    for (const [outKey, srcKey] of TREND_STATS) {
+        out[`${prefix}_${outKey}`] = src?.[srcKey] ?? null;
+    }
+    return out;
+};
+
+const flattenTrendBare = (src) => {
+    const out = {};
+    for (const [outKey, srcKey] of TREND_STATS) {
+        out[outKey] = src?.[srcKey] ?? null;
+    }
+    return out;
+};
+
+const toIso = (ts) => (ts == null ? null : new Date(ts).toISOString());
 
 const percentile = (sorted, p) => {
     if (!sorted.length) return null;
@@ -39,17 +62,12 @@ const flattenGroups = (rootGroup) => {
     const visit = (node) => {
         if (!node) return;
         if (node.name) {
-            const items = (node.checks || []).map((c) => ({
-                name: c.name,
-                passes: c.passes ?? 0,
-                fails: c.fails ?? 0
-            }));
-            const passes = items.reduce((a, c) => a + c.passes, 0);
-            const fails = items.reduce((a, c) => a + c.fails, 0);
+            const passed = (node.checks || []).reduce((a, c) => a + (c.passes ?? 0), 0);
+            const failed = (node.checks || []).reduce((a, c) => a + (c.fails ?? 0), 0);
             result.push({
                 name: node.name,
                 path: node.path,
-                checks: { total: items.length, passes, fails, items }
+                checks: { passed, failed }
             });
         }
         (node.groups || []).forEach(visit);
@@ -344,39 +362,45 @@ export class K6MetricsService extends AuthenticatedService {
                 name: g.name,
                 path: g.path,
                 checks: g.checks,
-                group_duration: gm.group_duration ?? null,
-                http_req_duration: gm.http_req_duration ?? null,
-                http_req_waiting: gm.http_req_waiting ?? null,
-                http_req_failed: gm.http_req_failed ?? null,
-                http_reqs: gm.http_reqs ?? null
+                http_req_duration: gm.http_req_duration ? flattenTrendBare(gm.http_req_duration) : null
             };
         });
 
+        const vus = m.vus?.values || {};
+        const vusMax = m.vus_max?.values || {};
+
         return {
-            scenarioName,
-            testType,
-            duration,
-            startedAt,
-            endedAt,
-            http_req_duration: pickStats(m.http_req_duration?.values, FULL_STATS),
-            http_req_waiting: pickStats(m.http_req_waiting?.values, FULL_STATS),
-            http_req_failed: { rate: m.http_req_failed?.values?.rate ?? null },
-            http_reqs: pickStats(m.http_reqs?.values, ['count', 'rate']),
-            group_duration: pickStats(m.group_duration?.values, FULL_STATS),
-            vus: pickStats(m.vus?.values, ['value', 'min', 'max']),
-            vus_max: pickStats(m.vus_max?.values, ['value', 'min', 'max']),
-            data_received: pickStats(m.data_received?.values, ['count', 'rate']),
-            data_sent: pickStats(m.data_sent?.values, ['count', 'rate']),
-            groups,
+            scenario_name: scenarioName,
+            test_type: testType,
             environment: process.env[ENV_VARS.ENV] || null,
-            testProject: process.env[ENV_VARS.PROJECT_NAME] || null,
-            pipelineId: process.env[ENV_VARS.BUILD_ID] || null,
-            commitSha: process.env[ENV_VARS.SOURCE_VERSION] || null,
+            test_project: process.env[ENV_VARS.PROJECT_NAME] || null,
+            pipeline_id: process.env[ENV_VARS.BUILD_ID] || null,
+            commit_sha: process.env[ENV_VARS.SOURCE_VERSION] || null,
             branch: process.env[ENV_VARS.SOURCE_BRANCH] || null,
-            runUrl: process.env[ENV_VARS.BUILD_ID]
+            run_url: process.env[ENV_VARS.BUILD_ID]
                 ? `${process.env[ENV_VARS.TEAM_FOUNDATION_COLLECTION_URI]}${process.env[ENV_VARS.TEAM_PROJECT]}/_build/results?buildId=${process.env[ENV_VARS.BUILD_ID]}`
                 : null,
-            provider: process.env[ENV_VARS.BUILD_ID] ? PROVIDERS.AZURE_DEVOPS : null
+            provider: process.env[ENV_VARS.BUILD_ID] ? PROVIDERS.AZURE_DEVOPS : null,
+            started_at: toIso(startedAt),
+            ended_at: toIso(endedAt),
+            duration_ms: duration,
+            ...flattenTrend(m.http_req_duration?.values, 'http_req_duration'),
+            ...flattenTrend(m.http_req_waiting?.values, 'http_req_waiting'),
+            http_req_failed_rate: m.http_req_failed?.values?.rate ?? null,
+            http_reqs_count: m.http_reqs?.values?.count ?? null,
+            http_reqs_rate: m.http_reqs?.values?.rate ?? null,
+            ...flattenTrend(m.group_duration?.values, 'group_duration'),
+            vus_value: vus.value ?? null,
+            vus_min: vus.min ?? null,
+            vus_max: vus.max ?? null,
+            vus_max_value: vusMax.value ?? null,
+            vus_max_min: vusMax.min ?? null,
+            vus_max_max: vusMax.max ?? null,
+            data_received_count: m.data_received?.values?.count ?? null,
+            data_received_rate: m.data_received?.values?.rate ?? null,
+            data_sent_count: m.data_sent?.values?.count ?? null,
+            data_sent_rate: m.data_sent?.values?.rate ?? null,
+            groups
         };
     }
 
@@ -426,7 +450,7 @@ export class K6MetricsService extends AuthenticatedService {
                 { Authorization: `Bearer ${token}` }
             );
 
-            console.log(`Metricas K6 enviadas: ${payload.scenarioName} (${payload.duration}ms, ${payload.groups.length} grupos)`);
+            console.log(`Metricas K6 enviadas: ${payload.scenario_name} (${payload.duration_ms}ms, ${payload.groups.length} grupos)`);
             return response?.data;
         } catch (error) {
             console.error(`Error enviando metricas K6: ${error?.message || error}`);
