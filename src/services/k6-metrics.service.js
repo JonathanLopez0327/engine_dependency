@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
+import crypto from 'node:crypto';
 import { AuthenticatedService } from './authenticated.service.js';
 import { DEFAULT_ENDPOINTS, ENV_VARS, PROVIDERS } from '../constants.js';
 
@@ -13,10 +14,12 @@ const TREND_STATS = [
     ['p99', 'p(99)']
 ];
 
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
 const flattenTrend = (src, prefix) => {
     const out = {};
     for (const [outKey, srcKey] of TREND_STATS) {
-        out[`${prefix}_${outKey}`] = src?.[srcKey] ?? null;
+        out[`${prefix}${capitalize(outKey)}`] = src?.[srcKey] ?? null;
     }
     return out;
 };
@@ -29,7 +32,7 @@ const flattenTrendBare = (src) => {
     return out;
 };
 
-const toIso = (ts) => (ts == null ? null : new Date(ts).toISOString());
+const toIso = (ts) => (ts === null || ts === undefined ? null : new Date(ts).toISOString());
 
 const percentile = (sorted, p) => {
     if (!sorted.length) return null;
@@ -136,6 +139,106 @@ const finalizeBuckets = (buckets) => {
     return result;
 };
 
+const endpointKey = (tags) => {
+    const name = tags?.name || tags?.url;
+    if (!name) return null;
+    const method = tags?.method || 'GET';
+    return `${method} ${name}`;
+};
+
+const ingestEndpointSample = (buckets, s) => {
+    if (s?.type !== 'Point') return;
+    const tags = s.data?.tags || {};
+    const key = endpointKey(tags);
+    if (!key) return;
+
+    const bucket = (buckets[key] ??= {
+        name: tags.name || tags.url,
+        method: tags.method || 'GET',
+        url: tags.url || null,
+        group: tags.group || null,
+        durations: [],
+        waitings: [],
+        failedTotal: 0,
+        failedSum: 0,
+        reqsCount: 0,
+        statuses: {}
+    });
+
+    const value = s.data?.value;
+    switch (s.metric) {
+        case 'http_req_duration':
+            if (typeof value === 'number') bucket.durations.push(value);
+            if (tags.status) bucket.statuses[tags.status] = (bucket.statuses[tags.status] || 0) + 1;
+            break;
+        case 'http_req_waiting':
+            if (typeof value === 'number') bucket.waitings.push(value);
+            break;
+        case 'http_req_failed':
+            bucket.failedTotal += 1;
+            bucket.failedSum += value ?? 0;
+            break;
+        case 'http_reqs':
+            bucket.reqsCount += value ?? 1;
+            break;
+    }
+};
+
+const finalizeEndpointBuckets = (buckets) => {
+    const result = {};
+    for (const [key, b] of Object.entries(buckets)) {
+        result[key] = {
+            name: b.name,
+            method: b.method,
+            url: b.url,
+            group: b.group,
+            http_req_duration: computeTrend(b.durations),
+            http_req_waiting: computeTrend(b.waitings),
+            http_req_failed: {
+                rate: b.failedTotal > 0 ? b.failedSum / b.failedTotal : null
+            },
+            http_reqs: { count: b.reqsCount },
+            statuses: b.statuses
+        };
+    }
+    return result;
+};
+
+/**
+ * Computes a stable fingerprint of the test endpoints, used by the backend to
+ * find the previous comparable run. Two runs share the same hash when they
+ * exercise the same set of `${METHOD} ${name}` keys (order-independent).
+ *
+ * Renaming an endpoint (or adding/removing one) changes the hash, so the
+ * backend will treat them as different tests and skip the comparison instead
+ * of producing a misleading diff.
+ *
+ * @param {Object<string, object>|Array<object>} endpointMetrics - Either the
+ *   map produced by `aggregateK6Endpoints`/`aggregateK6EndpointsFromFile`, or
+ *   an array of endpoint objects with `{method, name}`.
+ * @returns {string|null} 64-char hex SHA-256, or null if no endpoints.
+ */
+export const computeScriptHash = (endpointMetrics) => {
+    if (!endpointMetrics) return null;
+
+    const items = Array.isArray(endpointMetrics)
+        ? endpointMetrics
+        : Object.values(endpointMetrics);
+    if (!items.length) return null;
+
+    const keys = items
+        .map((e) => {
+            const method = (e?.method || 'GET').toUpperCase();
+            const name = e?.name || e?.url;
+            return name ? `${method} ${name}` : null;
+        })
+        .filter(Boolean)
+        .sort();
+
+    if (!keys.length) return null;
+    return crypto.createHash('sha256').update(keys.join('\n')).digest('hex');
+};
+
 /**
  * Aggregates per-group HTTP metrics from already-parsed K6 samples.
  * @param {Array<object>} samples - K6 NDJSON samples already parsed.
@@ -145,6 +248,22 @@ export const aggregateK6Samples = (samples = []) => {
     const buckets = {};
     for (const s of samples) ingestSample(buckets, s);
     return finalizeBuckets(buckets);
+};
+
+/**
+ * Aggregates per-endpoint HTTP metrics from already-parsed K6 samples.
+ * Endpoints are keyed by `${method} ${tags.name || tags.url}`. To get stable
+ * comparisons across runs, scripts should set `tags: { name: 'GET /users/:id' }`
+ * on each request — otherwise the literal URL (with parameter values inlined)
+ * is used and cardinality explodes.
+ *
+ * @param {Array<object>} samples - K6 NDJSON samples already parsed.
+ * @returns {Object<string, object>} Map of "METHOD name" -> per-endpoint metrics.
+ */
+export const aggregateK6Endpoints = (samples = []) => {
+    const buckets = {};
+    for (const s of samples) ingestEndpointSample(buckets, s);
+    return finalizeEndpointBuckets(buckets);
 };
 
 /**
@@ -167,6 +286,28 @@ export const aggregateK6SamplesFromFile = async (filePath) => {
         }
     }
     return finalizeBuckets(buckets);
+};
+
+/**
+ * Streams a K6 NDJSON file aggregating per-endpoint metrics without loading
+ * the whole file in memory. See `aggregateK6Endpoints` for keying details.
+ * @param {string} filePath - Path to the NDJSON output.
+ * @returns {Promise<Object<string, object>>} Map of "METHOD name" -> per-endpoint metrics.
+ */
+export const aggregateK6EndpointsFromFile = async (filePath) => {
+    const buckets = {};
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    for await (const line of rl) {
+        if (!line) continue;
+        try {
+            ingestEndpointSample(buckets, JSON.parse(line));
+        } catch {
+            // ignora lineas malformadas
+        }
+    }
+    return finalizeEndpointBuckets(buckets);
 };
 
 /**
@@ -199,6 +340,7 @@ export const buildSummaryFromSamplesFile = async (filePath) => {
         lastTime: null
     };
     const buckets = {};
+    const endpointBuckets = {};
     const groupPaths = new Set();
     let scenarios;
     let testTypeTag;
@@ -209,6 +351,7 @@ export const buildSummaryFromSamplesFile = async (filePath) => {
         try { s = JSON.parse(line); } catch { continue; }
 
         ingestSample(buckets, s);
+        ingestEndpointSample(endpointBuckets, s);
 
         if (s.type === 'Metric' && s.data?.thresholds) continue;
 
@@ -321,7 +464,8 @@ export const buildSummaryFromSamplesFile = async (filePath) => {
             tags: testTypeTag ? { test_type: testTypeTag } : {}
         },
         root_group: buildGroupTree(groupPaths),
-        _groupMetrics: finalizeBuckets(buckets)
+        _groupMetrics: finalizeBuckets(buckets),
+        _endpointMetrics: finalizeEndpointBuckets(endpointBuckets)
     };
 };
 
@@ -343,6 +487,8 @@ export class K6MetricsService extends AuthenticatedService {
      * @param {number} [meta.endedAt] - Override end timestamp (ms epoch).
      * @param {object} [meta.groupMetrics] - Per-group metrics keyed by group path.
      *   Use `aggregateK6Samples()` on the NDJSON output of `--out json=out.json` to build it.
+     * @param {object} [meta.endpointMetrics] - Per-endpoint metrics keyed by "METHOD name".
+     *   Use `aggregateK6Endpoints()` on the NDJSON output to build it.
      * @returns {object} The payload.
      */
     buildK6Payload(data, meta = {}) {
@@ -366,41 +512,60 @@ export class K6MetricsService extends AuthenticatedService {
             };
         });
 
+        const endpointMetrics = meta.endpointMetrics || {};
+        const scriptHash = meta.scriptHash !== undefined
+            ? meta.scriptHash
+            : computeScriptHash(endpointMetrics);
+        const endpoints = Object.values(endpointMetrics).map((e) => ({
+            name: e.name,
+            method: e.method,
+            url: e.url,
+            group: e.group,
+            http_reqs_count: e.http_reqs?.count ?? null,
+            http_req_failed_rate: e.http_req_failed?.rate ?? null,
+            http_req_duration: e.http_req_duration ? flattenTrendBare(e.http_req_duration) : null,
+            http_req_waiting: e.http_req_waiting ? flattenTrendBare(e.http_req_waiting) : null,
+            statuses: e.statuses || {}
+        }));
+
         const vus = m.vus?.values || {};
         const vusMax = m.vus_max?.values || {};
 
         return {
-            scenario_name: scenarioName,
-            test_type: testType,
+            scenarioName,
+            testType,
+            scriptHash,
             environment: process.env[ENV_VARS.ENV] || null,
-            test_project: process.env[ENV_VARS.PROJECT_NAME] || null,
-            pipeline_id: process.env[ENV_VARS.BUILD_ID] || null,
-            commit_sha: process.env[ENV_VARS.SOURCE_VERSION] || null,
+            testProject: process.env[ENV_VARS.PROJECT_NAME] || null,
+            pipelineId: process.env[ENV_VARS.PIPELINE_ID] || null,
+            buildId: process.env[ENV_VARS.BUILD_ID] || null,
+            commitSha: process.env[ENV_VARS.SOURCE_VERSION] || null,
             branch: process.env[ENV_VARS.SOURCE_BRANCH] || null,
-            run_url: process.env[ENV_VARS.BUILD_ID]
+            runUrl: process.env[ENV_VARS.BUILD_ID]
                 ? `${process.env[ENV_VARS.TEAM_FOUNDATION_COLLECTION_URI]}${process.env[ENV_VARS.TEAM_PROJECT]}/_build/results?buildId=${process.env[ENV_VARS.BUILD_ID]}`
                 : null,
             provider: process.env[ENV_VARS.BUILD_ID] ? PROVIDERS.AZURE_DEVOPS : null,
-            started_at: toIso(startedAt),
-            ended_at: toIso(endedAt),
-            duration_ms: duration,
-            ...flattenTrend(m.http_req_duration?.values, 'http_req_duration'),
-            ...flattenTrend(m.http_req_waiting?.values, 'http_req_waiting'),
-            http_req_failed_rate: m.http_req_failed?.values?.rate ?? null,
-            http_reqs_count: m.http_reqs?.values?.count ?? null,
-            http_reqs_rate: m.http_reqs?.values?.rate ?? null,
-            ...flattenTrend(m.group_duration?.values, 'group_duration'),
-            vus_value: vus.value ?? null,
-            vus_min: vus.min ?? null,
-            vus_max: vus.max ?? null,
-            vus_max_value: vusMax.value ?? null,
-            vus_max_min: vusMax.min ?? null,
-            vus_max_max: vusMax.max ?? null,
-            data_received_count: m.data_received?.values?.count ?? null,
-            data_received_rate: m.data_received?.values?.rate ?? null,
-            data_sent_count: m.data_sent?.values?.count ?? null,
-            data_sent_rate: m.data_sent?.values?.rate ?? null,
-            groups
+            startedAt: toIso(startedAt),
+            endedAt: toIso(endedAt),
+            durationMs: duration,
+            ...flattenTrend(m.http_req_duration?.values, 'httpReqDuration'),
+            ...flattenTrend(m.http_req_waiting?.values, 'httpReqWaiting'),
+            httpReqFailedRate: m.http_req_failed?.values?.rate ?? null,
+            httpReqsCount: m.http_reqs?.values?.count ?? null,
+            httpReqsRate: m.http_reqs?.values?.rate ?? null,
+            ...flattenTrend(m.group_duration?.values, 'groupDuration'),
+            vusValue: vus.value ?? null,
+            vusMin: vus.min ?? null,
+            vusMax: vus.max ?? null,
+            vusMaxValue: vusMax.value ?? null,
+            vusMaxMin: vusMax.min ?? null,
+            vusMaxMax: vusMax.max ?? null,
+            dataReceivedCount: m.data_received?.values?.count ?? null,
+            dataReceivedRate: m.data_received?.values?.rate ?? null,
+            dataSentCount: m.data_sent?.values?.count ?? null,
+            dataSentRate: m.data_sent?.values?.rate ?? null,
+            groups,
+            endpoints
         };
     }
 
@@ -439,8 +604,17 @@ export class K6MetricsService extends AuthenticatedService {
                 if (!resolvedMeta.groupMetrics && resolvedData._groupMetrics) {
                     resolvedMeta.groupMetrics = resolvedData._groupMetrics;
                 }
-            } else if (!resolvedMeta.groupMetrics && resolvedMeta.samplesPath) {
-                resolvedMeta.groupMetrics = await aggregateK6SamplesFromFile(resolvedMeta.samplesPath);
+                if (!resolvedMeta.endpointMetrics && resolvedData._endpointMetrics) {
+                    resolvedMeta.endpointMetrics = resolvedData._endpointMetrics;
+                }
+            } else if (resolvedMeta.samplesPath
+                && (!resolvedMeta.groupMetrics || !resolvedMeta.endpointMetrics)) {
+                if (!resolvedMeta.groupMetrics) {
+                    resolvedMeta.groupMetrics = await aggregateK6SamplesFromFile(resolvedMeta.samplesPath);
+                }
+                if (!resolvedMeta.endpointMetrics) {
+                    resolvedMeta.endpointMetrics = await aggregateK6EndpointsFromFile(resolvedMeta.samplesPath);
+                }
             }
 
             const payload = this.buildK6Payload(resolvedData, resolvedMeta);
@@ -450,10 +624,41 @@ export class K6MetricsService extends AuthenticatedService {
                 { Authorization: `Bearer ${token}` }
             );
 
-            console.log(`Metricas K6 enviadas: ${payload.scenario_name} (${payload.duration_ms}ms, ${payload.groups.length} grupos)`);
+            console.log(`Metricas K6 enviadas: ${payload.scenarioName} (${payload.durationMs}ms, ${payload.groups.length} grupos)`);
             return response?.data;
         } catch (error) {
             console.error(`Error enviando metricas K6: ${error?.message || error}`);
+        }
+    }
+
+    /**
+     * Fetches the performance comparison between a K6 run and the previous
+     * comparable run, as computed by the backend.
+     *
+     * @param {number|string} runId - The id of the run returned by `sendK6Metrics`.
+     * @returns {Promise<object|undefined>} The compare report
+     *   (`{ status, current, previous, global, endpoints }`), or undefined on error.
+     */
+    async getCompareReport(runId) {
+        if (runId === null || runId === undefined) {
+            console.error('runId requerido para obtener el reporte de comparacion');
+            return;
+        }
+
+        try {
+            const token = await this.generateToken();
+            if (!token) {
+                console.error('No se pudo obtener el token, omitiendo reporte de comparacion K6');
+                return;
+            }
+
+            const response = await this.sendGETRequest(
+                `${this.baseUrl}${this.k6MetricsEndpoint}/${runId}/compare`,
+                { Authorization: `Bearer ${token}` }
+            );
+            return response?.data;
+        } catch (error) {
+            console.error(`Error obteniendo reporte de comparacion K6: ${error?.message || error}`);
         }
     }
 }

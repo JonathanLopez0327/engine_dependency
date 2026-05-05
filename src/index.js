@@ -5,5 +5,8 @@ export {
     K6MetricsService,
     aggregateK6Samples,
     aggregateK6SamplesFromFile,
-    buildSummaryFromSamplesFile
+    aggregateK6Endpoints,
+    aggregateK6EndpointsFromFile,
+    buildSummaryFromSamplesFile,
+    computeScriptHash
 } from './services/k6-metrics.service.js';

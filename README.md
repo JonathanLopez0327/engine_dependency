@@ -24,6 +24,10 @@ DATA_ENGINE_SERVICE_PASSWORD=password
 ENV=qa
 CI=true
 
+# Identifica el proyecto que produce las metricas (usado por el backend
+# para agrupar runs y para construir el scriptHash baseline)
+PROJECT_NAME=mi-proyecto
+
 # K6 metrics (opcional, fallback si no estan en data.options del summary)
 SCENARIO_NAME=load-test
 TEST_TYPE=benchmark
@@ -136,9 +140,36 @@ await service.sendK6Metrics(data, { groupMetrics });
 
 #### Grupos (`group()`) y sus metricas
 
-K6 expone los grupos en `data.root_group` con su jerarquia y `checks`, **pero el summary nativo NO incluye metricas HTTP per-group**. Para obtener `http_req_duration`, `http_req_waiting`, `http_req_failed`, `http_reqs` y `group_duration` por grupo necesitas el stream NDJSON (`--out json=results.json`). Pasandolo via `meta.samplesPath`, el servicio lo streamea automaticamente y mergea las metricas en cada grupo del payload.
+K6 expone los grupos en `data.root_group` con su jerarquia y `checks`, **pero el summary nativo NO incluye metricas HTTP per-group**. Para obtener `http_req_duration` por grupo (y todas las metricas per-endpoint, ver siguiente seccion) necesitas el stream NDJSON (`--out json=results.json`). Pasandolo via `meta.samplesPath`, el servicio lo streamea automaticamente y mergea las metricas en cada grupo del payload.
 
-Si solo pasas el summary (sin `samplesPath`), los grupos saldran con `name`, `path`, `checks` y las metricas HTTP per-group como `null`.
+Si solo pasas el summary (sin `samplesPath`), los grupos saldran con `name`, `path`, `checks` y `http_req_duration` como `null`.
+
+#### Endpoints y comparacion entre runs
+
+Ademas de los grupos, el servicio extrae metricas **per-endpoint** del NDJSON, keyando por `${METHOD} ${tags.name || tags.url}`. Cada endpoint en el payload trae `http_reqs_count`, `http_req_failed_rate`, `http_req_duration`, `http_req_waiting` y un breakdown de `statuses` (`{"200": 120, "500": 3}`).
+
+Para que las comparaciones entre runs sean estables, **etiqueta cada request en tu script de K6**:
+
+```javascript
+http.get('https://api.com/users/123', { tags: { name: 'GET /users/:id' } });
+```
+
+Sin `tags.name`, K6 usa la URL literal y la cardinalidad explota (cada `userId` cuenta como un endpoint distinto).
+
+A partir del set de endpoints se computa un `scriptHash` (SHA-256 de los keys ordenados). El backend usa ese hash + `testProject` para encontrar el run anterior comparable. Renombrar, agregar o quitar un endpoint cambia el hash y el backend tratara los runs como tests distintos en lugar de producir un diff enganoso.
+
+Tras `sendK6Metrics`, puedes pedir el reporte de comparacion contra el run anterior:
+
+```javascript
+const result = await service.sendK6Metrics(null, { samplesPath: './results.json' });
+if (result?.id) {
+    const report = await service.getCompareReport(result.id);
+    if (report?.status === 'compared') {
+        const regressed = report.endpoints.filter((e) => e.status === 'regressed');
+        if (regressed.length) process.exit(1); // falla el pipeline en regresiones
+    }
+}
+```
 
 ## API
 
@@ -149,6 +180,7 @@ Clase base que provee metodos HTTP reutilizables.
 | Metodo | Parametros | Retorno | Descripcion |
 |---|---|---|---|
 | `sendPOSTRequest(url, body, headers?)` | `url`: string, `body`: object, `headers`: object (opcional) | `{ data, status }` | Envia una peticion POST con JSON |
+| `sendGETRequest(url, headers?)` | `url`: string, `headers`: object (opcional) | `{ data, status }` | Envia una peticion GET y parsea la respuesta como JSON |
 
 ### `AuthenticatedService`
 
@@ -199,7 +231,7 @@ Hereda los 4 campos de `AuthenticatedService` y agrega:
 
 ### `K6MetricsService`
 
-Extiende `AuthenticatedService`. Construye y envia metricas de pruebas de carga K6.
+Extiende `AuthenticatedService`. Construye y envia metricas de pruebas de carga K6, y consulta el reporte de comparacion vs el run anterior.
 
 **Constructor**
 
@@ -235,36 +267,49 @@ const service = new K6MetricsService({
 
 | Metodo | Parametros | Retorno | Descripcion |
 |---|---|---|---|
-| `buildK6Payload(data, meta?)` | `data`: K6 summary object, `meta`: `{ startedAt?, endedAt?, groupMetrics? }` | `object` | Extrae metricas del summary y arma el payload |
-| `sendK6Metrics(data, meta?)` | Igual que arriba; `meta` ademas acepta `samplesPath` (path al NDJSON; el servicio lo streamea y agrega per-group automaticamente). Si `data = null` y se pasa `samplesPath`, el summary se reconstruye desde el NDJSON | `object \| undefined` | Autentica y envia las metricas |
+| `buildK6Payload(data, meta?)` | `data`: K6 summary object, `meta`: `{ startedAt?, endedAt?, groupMetrics?, endpointMetrics?, scriptHash? }` | `object` | Extrae metricas del summary y arma el payload |
+| `sendK6Metrics(data, meta?)` | Igual que arriba; `meta` ademas acepta `samplesPath` (path al NDJSON; el servicio lo streamea y agrega per-group y per-endpoint automaticamente). Si `data = null` y se pasa `samplesPath`, el summary se reconstruye desde el NDJSON | `object \| undefined` | Autentica y envia las metricas. Devuelve `{ id, ... }` con el id persistido por el backend |
+| `getCompareReport(runId)` | `runId`: id devuelto por `sendK6Metrics` | `object \| undefined` | Pide al backend la comparacion vs el run anterior con el mismo `scriptHash + testProject`. Devuelve `{ status, current, previous, global, endpoints }`. `status` puede ser `compared`, `no_baseline`, etc. |
 
 ### Utilities
 
 - `aggregateK6Samples(samples)`: toma el NDJSON ya parseado (array de samples) y devuelve un objeto `{ [groupPath]: { http_req_duration, http_req_waiting, http_req_failed, http_reqs, group_duration } }`.
 - `aggregateK6SamplesFromFile(path)`: streamea el NDJSON line-by-line desde disco (memoria constante) y devuelve el mismo shape como `Promise`. Es lo que usa `sendK6Metrics` internamente cuando le pasas `meta.samplesPath`.
-- `buildSummaryFromSamplesFile(path)`: streamea el NDJSON y reconstruye un objeto con la misma forma que el `data` del summary nativo (metrics globales, root_group, scenarios, duration). Util cuando solo corriste con `--out json=...` sin `--summary-export`. Es lo que usa `sendK6Metrics` cuando le pasas `data = null`.
+- `aggregateK6Endpoints(samples)`: toma el NDJSON ya parseado y devuelve un mapa `{ "${METHOD} ${name}": { name, method, url, group, http_req_duration, http_req_waiting, http_req_failed, http_reqs, statuses } }`. Para keys estables, anota tus requests con `tags: { name: 'GET /users/:id' }`.
+- `aggregateK6EndpointsFromFile(path)`: version streaming desde disco del helper anterior. Es lo que usa `sendK6Metrics` cuando le pasas `meta.samplesPath`.
+- `buildSummaryFromSamplesFile(path)`: streamea el NDJSON y reconstruye un objeto con la misma forma que el `data` del summary nativo (metrics globales, root_group, scenarios, duration), e incluye `_groupMetrics` y `_endpointMetrics` ya agregados. Util cuando solo corriste con `--out json=...` sin `--summary-export`. Es lo que usa `sendK6Metrics` cuando le pasas `data = null`.
+- `computeScriptHash(endpointMetrics)`: SHA-256 estable del set de endpoints (`${METHOD} ${name}` ordenados). Acepta el mapa de `aggregateK6Endpoints*` o un array `[{method, name}]`. Devuelve `null` si no hay endpoints. `buildK6Payload` lo computa automaticamente si no pasas `meta.scriptHash`.
 
 ### Payload de metricas K6
 
-`sendK6Metrics` envia el siguiente payload al endpoint `/api/k6-metrics`:
+`sendK6Metrics` envia el siguiente payload al endpoint `/api/k6-metrics` (campos en flat camelCase):
 
 | Campo | Origen |
 |---|---|
 | `scenarioName` | Primer key de `data.options.scenarios` o env `SCENARIO_NAME` |
 | `testType` | `data.options.tags.test_type` o env `TEST_TYPE` |
-| `duration` | `data.state.testRunDurationMs` |
-| `startedAt` / `endedAt` | Calculados (epoch ms) o `meta.startedAt` / `meta.endedAt` |
-| `http_req_duration` | `{ avg, min, max, med, p(90), p(95), p(99) }` |
-| `http_req_waiting` | `{ avg, min, max, med, p(90), p(95), p(99) }` (TTFB) |
-| `http_req_failed` | `{ rate }` |
-| `http_reqs` | `{ count, rate }` |
-| `group_duration` | `{ avg, min, max, med, p(90), p(95), p(99) }` global |
-| `vus` / `vus_max` | `{ value, min, max }` |
-| `data_received` / `data_sent` | `{ count, rate }` (bytes) |
-| `groups` | Array `[{ name, path, checks, group_duration, http_req_duration, http_req_waiting, http_req_failed, http_reqs }]` (HTTP metrics solo si se pasa `meta.groupMetrics`) |
+| `scriptHash` | SHA-256 del set de endpoints (ver seccion *Endpoints y comparacion*) |
 | `environment` | Env `ENV` |
 | `testProject` | Env `PROJECT_NAME` |
-| `pipelineId`, `commitSha`, `branch`, `runUrl`, `provider` | Mismas vars de Azure DevOps que `TestInformationService` |
+| `pipelineId` | Env `SYSTEM_DEFINITIONID` (id de la definicion del pipeline) |
+| `buildId` | Env `BUILD_BUILDID` (id de la corrida especifica) |
+| `commitSha` | Env `BUILD_SOURCEVERSION` |
+| `branch` | Env `BUILD_SOURCEBRANCH` |
+| `runUrl` | URL del build en Azure DevOps (si `BUILD_BUILDID` esta seteado) |
+| `provider` | `'azure-devops'` si ejecuta en pipeline |
+| `startedAt` / `endedAt` | ISO strings, calculados a partir de `data.state.testRunDurationMs` o overrideados via `meta.startedAt` / `meta.endedAt` |
+| `durationMs` | `data.state.testRunDurationMs` |
+| `httpReqDurationAvg/Min/Max/Med/P90/P95/P99` | Trend global de `http_req_duration` (flatten) |
+| `httpReqWaitingAvg/...` | Trend global de `http_req_waiting` (TTFB, flatten) |
+| `httpReqFailedRate` | Rate de `http_req_failed` |
+| `httpReqsCount` / `httpReqsRate` | Counter de `http_reqs` |
+| `groupDurationAvg/...` | Trend global de `group_duration` (flatten) |
+| `vusValue` / `vusMin` / `vusMax` | Valores actuales de `vus` |
+| `vusMaxValue` / `vusMaxMin` / `vusMaxMax` | Valores de `vus_max` |
+| `dataReceivedCount` / `dataReceivedRate` | Bytes recibidos (counter + rate) |
+| `dataSentCount` / `dataSentRate` | Bytes enviados (counter + rate) |
+| `groups` | Array `[{ name, path, checks: { passed, failed }, http_req_duration }]`. `http_req_duration` solo viene poblado si se pasa `meta.groupMetrics` o `meta.samplesPath` |
+| `endpoints` | Array `[{ name, method, url, group, http_reqs_count, http_req_failed_rate, http_req_duration, http_req_waiting, statuses }]`. Solo viene poblado si se pasa `meta.endpointMetrics` o `meta.samplesPath` |
 
 ### Payload enviado
 
