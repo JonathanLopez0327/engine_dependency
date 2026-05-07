@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import assert from 'node:assert/strict';
 import {
     K6MetricsService,
     aggregateK6Samples,
@@ -88,12 +89,13 @@ describe('K6MetricsService', () => {
             serviceAccount: 'test@test.com',
             servicePassword: 'password'
         });
-        vi.spyOn(console, 'log').mockImplementation(() => { });
-        vi.spyOn(console, 'error').mockImplementation(() => { });
+        mock.method(console, 'log', () => { });
+        mock.method(console, 'error', () => { });
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        mock.restoreAll();
+        mock.reset();
         delete process.env.CI;
         delete process.env.SCENARIO_NAME;
         delete process.env.TEST_TYPE;
@@ -107,18 +109,18 @@ describe('K6MetricsService', () => {
 
     describe('constructor', () => {
         it('debe usar el endpoint default de k6 metrics', () => {
-            expect(service.k6MetricsEndpoint).toBe('/api/k6-metrics');
+            assert.equal(service.k6MetricsEndpoint, '/api/k6-metrics');
         });
 
         it('debe permitir override del endpoint', () => {
             const s = new K6MetricsService({ k6MetricsEndpoint: '/custom/k6' });
-            expect(s.k6MetricsEndpoint).toBe('/custom/k6');
+            assert.equal(s.k6MetricsEndpoint, '/custom/k6');
         });
 
         it('debe heredar la config de auth de AuthenticatedService', () => {
-            expect(service.baseUrl).toBe('https://api.test.com');
-            expect(service.tokenEndpoint).toBe('/auth/login');
-            expect(typeof service.generateToken).toBe('function');
+            assert.equal(service.baseUrl, 'https://api.test.com');
+            assert.equal(service.tokenEndpoint, '/auth/login');
+            assert.equal(typeof service.generateToken, 'function');
         });
     });
 
@@ -126,43 +128,43 @@ describe('K6MetricsService', () => {
         it('debe aplanar todos los stats de httpReqDuration y httpReqWaiting', () => {
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.httpReqDurationAvg).toBe(120.5);
-            expect(payload.httpReqDurationMin).toBe(50);
-            expect(payload.httpReqDurationMax).toBe(800);
-            expect(payload.httpReqDurationMed).toBe(100);
-            expect(payload.httpReqDurationP90).toBe(200);
-            expect(payload.httpReqDurationP95).toBe(300);
-            expect(payload.httpReqDurationP99).toBe(600);
-            expect(payload.httpReqWaitingAvg).toBe(80);
-            expect(payload.httpReqWaitingP95).toBe(250);
+            assert.equal(payload.httpReqDurationAvg, 120.5);
+            assert.equal(payload.httpReqDurationMin, 50);
+            assert.equal(payload.httpReqDurationMax, 800);
+            assert.equal(payload.httpReqDurationMed, 100);
+            assert.equal(payload.httpReqDurationP90, 200);
+            assert.equal(payload.httpReqDurationP95, 300);
+            assert.equal(payload.httpReqDurationP99, 600);
+            assert.equal(payload.httpReqWaitingAvg, 80);
+            assert.equal(payload.httpReqWaitingP95, 250);
         });
 
         it('debe aplanar rate de httpReqFailed y stats de httpReqs', () => {
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.httpReqFailedRate).toBe(0.02);
-            expect(payload.httpReqsCount).toBe(200);
-            expect(payload.httpReqsRate).toBe(20.5);
+            assert.equal(payload.httpReqFailedRate, 0.02);
+            assert.equal(payload.httpReqsCount, 200);
+            assert.equal(payload.httpReqsRate, 20.5);
         });
 
         it('debe aplanar concurrencia y transferencia', () => {
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.vusValue).toBe(10);
-            expect(payload.vusMin).toBe(1);
-            expect(payload.vusMax).toBe(50);
-            expect(payload.vusMaxValue).toBe(50);
-            expect(payload.vusMaxMin).toBe(50);
-            expect(payload.vusMaxMax).toBe(50);
-            expect(payload.dataReceivedCount).toBe(102400);
-            expect(payload.dataReceivedRate).toBe(1024);
-            expect(payload.dataSentCount).toBe(51200);
-            expect(payload.dataSentRate).toBe(512);
+            assert.equal(payload.vusValue, 10);
+            assert.equal(payload.vusMin, 1);
+            assert.equal(payload.vusMax, 50);
+            assert.equal(payload.vusMaxValue, 50);
+            assert.equal(payload.vusMaxMin, 50);
+            assert.equal(payload.vusMaxMax, 50);
+            assert.equal(payload.dataReceivedCount, 102400);
+            assert.equal(payload.dataReceivedRate, 1024);
+            assert.equal(payload.dataSentCount, 51200);
+            assert.equal(payload.dataSentRate, 512);
         });
 
         it('debe incluir scenarioName desde data.options.scenarios', () => {
             const payload = service.buildK6Payload(mockSummary);
-            expect(payload.scenarioName).toBe('my_scenario');
+            assert.equal(payload.scenarioName, 'my_scenario');
         });
 
         it('debe usar SCENARIO_NAME env var como fallback cuando no hay scenarios', () => {
@@ -171,12 +173,12 @@ describe('K6MetricsService', () => {
 
             const payload = service.buildK6Payload(data);
 
-            expect(payload.scenarioName).toBe('fallback-scenario');
+            assert.equal(payload.scenarioName, 'fallback-scenario');
         });
 
         it('debe extraer testType desde data.options.tags.test_type', () => {
             const payload = service.buildK6Payload(mockSummary);
-            expect(payload.testType).toBe('benchmark');
+            assert.equal(payload.testType, 'benchmark');
         });
 
         it('debe usar TEST_TYPE env var como fallback', () => {
@@ -185,44 +187,44 @@ describe('K6MetricsService', () => {
 
             const payload = service.buildK6Payload(data);
 
-            expect(payload.testType).toBe('load');
+            assert.equal(payload.testType, 'load');
         });
 
         it('debe calcular durationMs, startedAt y endedAt en ISO', () => {
             const fixedNow = 1_700_000_000_000;
-            vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
+            mock.method(Date, 'now', () => fixedNow);
 
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.durationMs).toBe(60000);
-            expect(payload.endedAt).toBe(new Date(fixedNow).toISOString());
-            expect(payload.startedAt).toBe(new Date(fixedNow - 60000).toISOString());
+            assert.equal(payload.durationMs, 60000);
+            assert.equal(payload.endedAt, new Date(fixedNow).toISOString());
+            assert.equal(payload.startedAt, new Date(fixedNow - 60000).toISOString());
         });
 
         it('debe respetar startedAt y endedAt pasados via meta (convertidos a ISO)', () => {
             const payload = service.buildK6Payload(mockSummary, { startedAt: 1000, endedAt: 9000 });
 
-            expect(payload.startedAt).toBe(new Date(1000).toISOString());
-            expect(payload.endedAt).toBe(new Date(9000).toISOString());
+            assert.equal(payload.startedAt, new Date(1000).toISOString());
+            assert.equal(payload.endedAt, new Date(9000).toISOString());
         });
 
         it('debe ser defensive: data vacio retorna campos null sin throw', () => {
             const payload = service.buildK6Payload({});
 
-            expect(payload.httpReqDurationAvg).toBeNull();
-            expect(payload.httpReqDurationP99).toBeNull();
-            expect(payload.httpReqWaitingAvg).toBeNull();
-            expect(payload.httpReqFailedRate).toBeNull();
-            expect(payload.httpReqsCount).toBeNull();
-            expect(payload.httpReqsRate).toBeNull();
-            expect(payload.groupDurationAvg).toBeNull();
-            expect(payload.vusValue).toBeNull();
-            expect(payload.vusMax).toBeNull();
-            expect(payload.scenarioName).toBeNull();
-            expect(payload.testType).toBeNull();
-            expect(payload.scriptHash).toBeNull();
-            expect(payload.durationMs).toBeNull();
-            expect(payload.groups).toEqual([]);
+            assert.equal(payload.httpReqDurationAvg, null);
+            assert.equal(payload.httpReqDurationP99, null);
+            assert.equal(payload.httpReqWaitingAvg, null);
+            assert.equal(payload.httpReqFailedRate, null);
+            assert.equal(payload.httpReqsCount, null);
+            assert.equal(payload.httpReqsRate, null);
+            assert.equal(payload.groupDurationAvg, null);
+            assert.equal(payload.vusValue, null);
+            assert.equal(payload.vusMax, null);
+            assert.equal(payload.scenarioName, null);
+            assert.equal(payload.testType, null);
+            assert.equal(payload.scriptHash, null);
+            assert.equal(payload.durationMs, null);
+            assert.deepEqual(payload.groups, []);
         });
 
         it('debe derivar scriptHash automaticamente desde endpointMetrics', () => {
@@ -232,7 +234,7 @@ describe('K6MetricsService', () => {
             };
             const payload = service.buildK6Payload(mockSummary, { endpointMetrics });
 
-            expect(payload.scriptHash).toMatch(/^[0-9a-f]{64}$/);
+            assert.match(payload.scriptHash, /^[0-9a-f]{64}$/);
         });
 
         it('scriptHash debe ser estable cuando cambia el orden de los endpoints', () => {
@@ -249,7 +251,7 @@ describe('K6MetricsService', () => {
                 }
             });
 
-            expect(a.scriptHash).toBe(b.scriptHash);
+            assert.equal(a.scriptHash, b.scriptHash);
         });
 
         it('scriptHash debe cambiar cuando se agrega o renombra un endpoint', () => {
@@ -263,12 +265,12 @@ describe('K6MetricsService', () => {
                 }
             });
 
-            expect(a.scriptHash).not.toBe(b.scriptHash);
+            assert.notEqual(a.scriptHash, b.scriptHash);
         });
 
         it('debe respetar scriptHash explicito pasado via meta', () => {
             const payload = service.buildK6Payload(mockSummary, { scriptHash: 'custom-hash' });
-            expect(payload.scriptHash).toBe('custom-hash');
+            assert.equal(payload.scriptHash, 'custom-hash');
         });
 
         it('debe permitir forzar scriptHash a null via meta', () => {
@@ -276,7 +278,7 @@ describe('K6MetricsService', () => {
                 endpointMetrics: { 'GET /users': { name: '/users', method: 'GET' } },
                 scriptHash: null
             });
-            expect(payload.scriptHash).toBeNull();
+            assert.equal(payload.scriptHash, null);
         });
 
         it('debe mapear pipelineId desde SYSTEM_DEFINITIONID y buildId desde BUILD_BUILDID', () => {
@@ -287,30 +289,30 @@ describe('K6MetricsService', () => {
 
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.pipelineId).toBe('42');
-            expect(payload.buildId).toBe('12345');
-            expect(payload.runUrl).toBe('https://dev.azure.com/org/proj/_build/results?buildId=12345');
-            expect(payload.provider).toBe('azure-devops');
+            assert.equal(payload.pipelineId, '42');
+            assert.equal(payload.buildId, '12345');
+            assert.equal(payload.runUrl, 'https://dev.azure.com/org/proj/_build/results?buildId=12345');
+            assert.equal(payload.provider, 'azure-devops');
         });
 
         it('debe dejar pipelineId, buildId, runUrl y provider null fuera de CI', () => {
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.pipelineId).toBeNull();
-            expect(payload.buildId).toBeNull();
-            expect(payload.runUrl).toBeNull();
-            expect(payload.provider).toBeNull();
+            assert.equal(payload.pipelineId, null);
+            assert.equal(payload.buildId, null);
+            assert.equal(payload.runUrl, null);
+            assert.equal(payload.provider, null);
         });
 
         it('debe aplanar groupDuration global', () => {
             const payload = service.buildK6Payload(mockSummary);
-            expect(payload.groupDurationAvg).toBe(1500);
-            expect(payload.groupDurationMin).toBe(800);
-            expect(payload.groupDurationMax).toBe(3000);
-            expect(payload.groupDurationMed).toBe(1400);
-            expect(payload.groupDurationP90).toBe(2500);
-            expect(payload.groupDurationP95).toBe(2800);
-            expect(payload.groupDurationP99).toBe(2950);
+            assert.equal(payload.groupDurationAvg, 1500);
+            assert.equal(payload.groupDurationMin, 800);
+            assert.equal(payload.groupDurationMax, 3000);
+            assert.equal(payload.groupDurationMed, 1400);
+            assert.equal(payload.groupDurationP90, 2500);
+            assert.equal(payload.groupDurationP95, 2800);
+            assert.equal(payload.groupDurationP99, 2950);
         });
     });
 
@@ -318,23 +320,23 @@ describe('K6MetricsService', () => {
         it('debe aplanar root_group en una lista plana con paths jerarquicos', () => {
             const payload = service.buildK6Payload(mockSummary);
 
-            expect(payload.groups).toHaveLength(3);
+            assert.equal(payload.groups.length, 3);
             const paths = payload.groups.map((g) => g.path);
-            expect(paths).toEqual(['::Login', '::Checkout', '::Checkout::Payment']);
+            assert.deepEqual(paths, ['::Login', '::Checkout', '::Checkout::Payment']);
         });
 
         it('debe agregar checks por grupo como { passed, failed }', () => {
             const payload = service.buildK6Payload(mockSummary);
             const login = payload.groups.find((g) => g.path === '::Login');
 
-            expect(login.checks).toEqual({ passed: 195, failed: 5 });
+            assert.deepEqual(login.checks, { passed: 195, failed: 5 });
         });
 
         it('debe dejar http_req_duration null cuando no hay groupMetrics', () => {
             const payload = service.buildK6Payload(mockSummary);
             const login = payload.groups.find((g) => g.path === '::Login');
 
-            expect(login.http_req_duration).toBeNull();
+            assert.equal(login.http_req_duration, null);
         });
 
         it('debe mergear http_req_duration por path desde groupMetrics (claves p90 sin parens)', () => {
@@ -348,17 +350,17 @@ describe('K6MetricsService', () => {
             const login = payload.groups.find((g) => g.path === '::Login');
             const checkout = payload.groups.find((g) => g.path === '::Checkout');
 
-            expect(login.http_req_duration).toEqual({
+            assert.deepEqual(login.http_req_duration, {
                 avg: 100, min: 50, max: 200, med: 90, p90: 150, p95: 180, p99: 195
             });
-            expect(checkout.http_req_duration).toBeNull();
+            assert.equal(checkout.http_req_duration, null);
         });
     });
 
     describe('endpoints', () => {
         it('debe emitir endpoints vacio cuando no hay endpointMetrics', () => {
             const payload = service.buildK6Payload(mockSummary);
-            expect(payload.endpoints).toEqual([]);
+            assert.deepEqual(payload.endpoints, []);
         });
 
         it('debe construir endpoints con method, statuses y trends desde endpointMetrics', () => {
@@ -378,18 +380,18 @@ describe('K6MetricsService', () => {
 
             const payload = service.buildK6Payload(mockSummary, { endpointMetrics });
 
-            expect(payload.endpoints).toHaveLength(1);
+            assert.equal(payload.endpoints.length, 1);
             const ep = payload.endpoints[0];
-            expect(ep.name).toBe('GET /users/:id');
-            expect(ep.method).toBe('GET');
-            expect(ep.group).toBe('::Login');
-            expect(ep.http_reqs_count).toBe(4500);
-            expect(ep.http_req_failed_rate).toBe(0.02);
-            expect(ep.http_req_duration).toEqual({
+            assert.equal(ep.name, 'GET /users/:id');
+            assert.equal(ep.method, 'GET');
+            assert.equal(ep.group, '::Login');
+            assert.equal(ep.http_reqs_count, 4500);
+            assert.equal(ep.http_req_failed_rate, 0.02);
+            assert.deepEqual(ep.http_req_duration, {
                 avg: 89.2, min: 12, max: 500, med: 80, p90: 180, p95: 210, p99: 480
             });
-            expect(ep.http_req_waiting.p95).toBe(190);
-            expect(ep.statuses).toEqual({ 200: 4400, 404: 80, 500: 20 });
+            assert.equal(ep.http_req_waiting.p95, 190);
+            assert.deepEqual(ep.statuses, { 200: 4400, 404: 80, 500: 20 });
         });
     });
 
@@ -407,23 +409,23 @@ describe('K6MetricsService', () => {
 
             const result = aggregateK6Endpoints(samples);
 
-            expect(Object.keys(result).sort()).toEqual(['GET /users/:id', 'POST /orders']);
+            assert.deepEqual(Object.keys(result).sort(), ['GET /users/:id', 'POST /orders']);
             const get = result['GET /users/:id'];
-            expect(get.http_req_duration.avg).toBe(300);
-            expect(get.http_req_duration.min).toBe(100);
-            expect(get.http_req_duration.max).toBe(500);
-            expect(get.http_req_failed.rate).toBe(0.5);
-            expect(get.http_reqs.count).toBe(1);
-            expect(get.statuses).toEqual({ 200: 2, 500: 1 });
-            expect(get.method).toBe('GET');
-            expect(get.name).toBe('/users/:id');
+            assert.equal(get.http_req_duration.avg, 300);
+            assert.equal(get.http_req_duration.min, 100);
+            assert.equal(get.http_req_duration.max, 500);
+            assert.equal(get.http_req_failed.rate, 0.5);
+            assert.equal(get.http_reqs.count, 1);
+            assert.deepEqual(get.statuses, { 200: 2, 500: 1 });
+            assert.equal(get.method, 'GET');
+            assert.equal(get.name, '/users/:id');
         });
 
         it('debe ignorar samples sin tags.name ni tags.url', () => {
             const samples = [
                 { type: 'Point', metric: 'http_req_duration', data: { value: 100, tags: { method: 'GET' } } }
             ];
-            expect(aggregateK6Endpoints(samples)).toEqual({});
+            assert.deepEqual(aggregateK6Endpoints(samples), {});
         });
 
         it('debe usar tags.url como fallback cuando no hay tags.name', () => {
@@ -431,7 +433,7 @@ describe('K6MetricsService', () => {
                 { type: 'Point', metric: 'http_req_duration', data: { value: 100, tags: { url: 'https://api.com/raw', method: 'GET' } } }
             ];
             const result = aggregateK6Endpoints(samples);
-            expect(result['GET https://api.com/raw'].http_req_duration.avg).toBe(100);
+            assert.equal(result['GET https://api.com/raw'].http_req_duration.avg, 100);
         });
     });
 
@@ -454,9 +456,9 @@ describe('K6MetricsService', () => {
 
             const result = await aggregateK6EndpointsFromFile(tmpFile);
 
-            expect(result['POST /auth'].http_req_duration.avg).toBe(150);
-            expect(result['POST /auth'].http_reqs.count).toBe(1);
-            expect(result['POST /auth'].statuses).toEqual({ 200: 2 });
+            assert.equal(result['POST /auth'].http_req_duration.avg, 150);
+            assert.equal(result['POST /auth'].http_reqs.count, 1);
+            assert.deepEqual(result['POST /auth'].statuses, { 200: 2 });
         });
     });
 
@@ -476,14 +478,14 @@ describe('K6MetricsService', () => {
 
             const result = aggregateK6Samples(samples);
 
-            expect(Object.keys(result).sort()).toEqual(['::Checkout', '::Login']);
-            expect(result['::Login'].http_req_duration.min).toBe(100);
-            expect(result['::Login'].http_req_duration.max).toBe(300);
-            expect(result['::Login'].http_req_duration.avg).toBeCloseTo(200);
-            expect(result['::Login'].http_req_failed).toEqual({ rate: 0.5 });
-            expect(result['::Login'].http_reqs).toEqual({ count: 2 });
-            expect(result['::Login'].group_duration.avg).toBe(1500);
-            expect(result['::Checkout'].http_req_duration.min).toBe(50);
+            assert.deepEqual(Object.keys(result).sort(), ['::Checkout', '::Login']);
+            assert.equal(result['::Login'].http_req_duration.min, 100);
+            assert.equal(result['::Login'].http_req_duration.max, 300);
+            assert.ok(Math.abs(result['::Login'].http_req_duration.avg - 200) < 0.001);
+            assert.deepEqual(result['::Login'].http_req_failed, { rate: 0.5 });
+            assert.deepEqual(result['::Login'].http_reqs, { count: 2 });
+            assert.equal(result['::Login'].group_duration.avg, 1500);
+            assert.equal(result['::Checkout'].http_req_duration.min, 50);
         });
 
         it('debe ignorar samples sin tag de grupo', () => {
@@ -494,7 +496,7 @@ describe('K6MetricsService', () => {
 
             const result = aggregateK6Samples(samples);
 
-            expect(result).toEqual({});
+            assert.deepEqual(result, {});
         });
     });
 
@@ -519,11 +521,11 @@ describe('K6MetricsService', () => {
 
             const result = await aggregateK6SamplesFromFile(tmpFile);
 
-            expect(Object.keys(result).sort()).toEqual(['::Checkout', '::Login']);
-            expect(result['::Login'].http_req_duration.avg).toBe(150);
-            expect(result['::Login'].http_reqs).toEqual({ count: 1 });
-            expect(result['::Login'].group_duration.avg).toBe(1500);
-            expect(result['::Checkout'].http_req_duration.avg).toBe(80);
+            assert.deepEqual(Object.keys(result).sort(), ['::Checkout', '::Login']);
+            assert.equal(result['::Login'].http_req_duration.avg, 150);
+            assert.deepEqual(result['::Login'].http_reqs, { count: 1 });
+            assert.equal(result['::Login'].group_duration.avg, 1500);
+            assert.equal(result['::Checkout'].http_req_duration.avg, 80);
         });
 
         it('debe ignorar lineas malformadas', async () => {
@@ -537,7 +539,7 @@ describe('K6MetricsService', () => {
 
             const result = await aggregateK6SamplesFromFile(tmpFile);
 
-            expect(result['::A'].http_req_duration.avg).toBe(50);
+            assert.equal(result['::A'].http_req_duration.avg, 50);
         });
     });
 
@@ -564,26 +566,26 @@ describe('K6MetricsService', () => {
 
             const summary = await buildSummaryFromSamplesFile(tmpFile);
 
-            expect(summary.state.testRunDurationMs).toBe(10000);
-            expect(summary.metrics.http_req_duration.values.avg).toBe(100);
-            expect(summary.metrics.http_reqs.values.count).toBe(2);
-            expect(summary.metrics.data_sent.values.count).toBe(200);
-            expect(summary.options.scenarios).toEqual({ s1: {} });
-            expect(summary.options.tags).toEqual({ test_type: 'load' });
+            assert.equal(summary.state.testRunDurationMs, 10000);
+            assert.equal(summary.metrics.http_req_duration.values.avg, 100);
+            assert.equal(summary.metrics.http_reqs.values.count, 2);
+            assert.equal(summary.metrics.data_sent.values.count, 200);
+            assert.deepEqual(summary.options.scenarios, { s1: {} });
+            assert.deepEqual(summary.options.tags, { test_type: 'load' });
             const groupPaths = summary.root_group.groups.map((g) => g.path).sort();
-            expect(groupPaths).toEqual(['::A', '::B']);
-            expect(summary._groupMetrics['::A'].http_req_duration.avg).toBe(50);
-            expect(summary._groupMetrics['::B'].http_req_duration.avg).toBe(150);
+            assert.deepEqual(groupPaths, ['::A', '::B']);
+            assert.equal(summary._groupMetrics['::A'].http_req_duration.avg, 50);
+            assert.equal(summary._groupMetrics['::B'].http_req_duration.avg, 150);
         });
     });
 
     describe('computeScriptHash', () => {
         it('debe retornar null cuando el input es vacio o sin endpoints validos', () => {
-            expect(computeScriptHash(null)).toBeNull();
-            expect(computeScriptHash(undefined)).toBeNull();
-            expect(computeScriptHash({})).toBeNull();
-            expect(computeScriptHash([])).toBeNull();
-            expect(computeScriptHash([{ method: 'GET' }])).toBeNull();
+            assert.equal(computeScriptHash(null), null);
+            assert.equal(computeScriptHash(undefined), null);
+            assert.equal(computeScriptHash({}), null);
+            assert.equal(computeScriptHash([]), null);
+            assert.equal(computeScriptHash([{ method: 'GET' }]), null);
         });
 
         it('debe aceptar tanto map como array', () => {
@@ -596,18 +598,18 @@ describe('K6MetricsService', () => {
                 { name: '/orders', method: 'POST' }
             ];
 
-            expect(computeScriptHash(map)).toBe(computeScriptHash(arr));
+            assert.equal(computeScriptHash(map), computeScriptHash(arr));
         });
 
         it('debe normalizar el method a mayusculas', () => {
             const a = computeScriptHash([{ name: '/users', method: 'get' }]);
             const b = computeScriptHash([{ name: '/users', method: 'GET' }]);
-            expect(a).toBe(b);
+            assert.equal(a, b);
         });
 
         it('debe usar tags.url como fallback cuando no hay name', () => {
             const hash = computeScriptHash([{ url: 'https://api.com/raw', method: 'GET' }]);
-            expect(hash).toMatch(/^[0-9a-f]{64}$/);
+            assert.match(hash, /^[0-9a-f]{64}$/);
         });
     });
 
@@ -624,82 +626,85 @@ describe('K6MetricsService', () => {
                 },
                 endpoints: []
             };
-            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-            vi.spyOn(service, 'sendGETRequest').mockResolvedValue({ data: report, status: 200 });
+            mock.method(service, 'generateToken', async () => 'mock-token');
+            mock.method(service, 'sendGETRequest', async () => ({ data: report, status: 200 }));
 
             const result = await service.getCompareReport(42);
 
-            expect(result).toEqual(report);
-            expect(service.sendGETRequest).toHaveBeenCalledWith(
+            assert.deepEqual(result, report);
+            assert.deepEqual(service.sendGETRequest.mock.calls[0].arguments, [
                 'https://api.test.com/api/k6-metrics/42/compare',
                 { Authorization: 'Bearer mock-token' }
-            );
+            ]);
         });
 
         it('debe retornar undefined y loguear cuando runId no esta definido', async () => {
-            vi.spyOn(service, 'generateToken');
+            const tokenSpy = mock.method(service, 'generateToken', service.generateToken);
 
             const result = await service.getCompareReport(undefined);
 
-            expect(result).toBeUndefined();
-            expect(service.generateToken).not.toHaveBeenCalled();
-            expect(console.error).toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.equal(tokenSpy.mock.calls.length, 0);
+            assert.ok(console.error.mock.calls.length > 0);
         });
 
         it('debe retornar undefined cuando no obtiene token', async () => {
-            vi.spyOn(service, 'generateToken').mockResolvedValue(undefined);
+            mock.method(service, 'generateToken', async () => undefined);
 
             const result = await service.getCompareReport(42);
 
-            expect(result).toBeUndefined();
-            expect(console.error).toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.ok(console.error.mock.calls.length > 0);
         });
 
         it('debe atrapar errores de red y retornar undefined', async () => {
-            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-            vi.spyOn(service, 'sendGETRequest').mockRejectedValue(new Error('boom'));
+            mock.method(service, 'generateToken', async () => 'mock-token');
+            mock.method(service, 'sendGETRequest', async () => { throw new Error('boom'); });
 
             const result = await service.getCompareReport(42);
 
-            expect(result).toBeUndefined();
-            expect(console.error).toHaveBeenCalledWith(expect.stringContaining('boom'));
+            assert.equal(result, undefined);
+            const loggedWithBoom = console.error.mock.calls.some((c) =>
+                c.arguments.some((a) => typeof a === 'string' && a.includes('boom'))
+            );
+            assert.ok(loggedWithBoom);
         });
     });
 
     describe('sendK6Metrics', () => {
         it('debe no ejecutarse si CI no esta definido', async () => {
             delete process.env.CI;
-            vi.spyOn(service, 'generateToken');
+            const tokenSpy = mock.method(service, 'generateToken', service.generateToken);
 
             const result = await service.sendK6Metrics(mockSummary);
 
-            expect(result).toBeUndefined();
-            expect(service.generateToken).not.toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.equal(tokenSpy.mock.calls.length, 0);
         });
 
         it('debe enviar las metricas cuando CI esta activo', async () => {
             process.env.CI = 'true';
-            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 42 } });
+            mock.method(service, 'generateToken', async () => 'mock-token');
+            mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 42 } }));
 
             const result = await service.sendK6Metrics(mockSummary);
 
-            expect(result).toEqual({ id: 42 });
-            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
-                'https://api.test.com/api/k6-metrics',
-                expect.objectContaining({ scenarioName: 'my_scenario', testType: 'benchmark' }),
-                { Authorization: 'Bearer mock-token' }
-            );
+            assert.deepEqual(result, { id: 42 });
+            const args = service.sendPOSTRequest.mock.calls[0].arguments;
+            assert.equal(args[0], 'https://api.test.com/api/k6-metrics');
+            assert.equal(args[1].scenarioName, 'my_scenario');
+            assert.equal(args[1].testType, 'benchmark');
+            assert.deepEqual(args[2], { Authorization: 'Bearer mock-token' });
         });
 
         it('debe retornar undefined si no obtiene token', async () => {
             process.env.CI = 'true';
-            vi.spyOn(service, 'generateToken').mockResolvedValue(undefined);
+            mock.method(service, 'generateToken', async () => undefined);
 
             const result = await service.sendK6Metrics(mockSummary);
 
-            expect(result).toBeUndefined();
-            expect(console.error).toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.ok(console.error.mock.calls.length > 0);
         });
 
         it('debe reconstruir summary desde NDJSON cuando data es null', async () => {
@@ -718,23 +723,23 @@ describe('K6MetricsService', () => {
             fs.writeFileSync(tmpFile, lines.map((l) => JSON.stringify(l)).join('\n'));
 
             try {
-                vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-                vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 99 } });
+                mock.method(service, 'generateToken', async () => 'mock-token');
+                mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 99 } }));
 
                 await service.sendK6Metrics(null, { samplesPath: tmpFile });
 
-                const sent = service.sendPOSTRequest.mock.calls[0][1];
-                expect(sent.scenarioName).toBe('updateActivity');
-                expect(sent.testType).toBe('benchmark');
-                expect(sent.durationMs).toBe(30000);
-                expect(sent.httpReqDurationAvg).toBe(150);
-                expect(sent.httpReqsCount).toBe(1);
-                expect(sent.dataReceivedCount).toBe(5000);
-                expect(sent.vusValue).toBe(5);
+                const sent = service.sendPOSTRequest.mock.calls[0].arguments[1];
+                assert.equal(sent.scenarioName, 'updateActivity');
+                assert.equal(sent.testType, 'benchmark');
+                assert.equal(sent.durationMs, 30000);
+                assert.equal(sent.httpReqDurationAvg, 150);
+                assert.equal(sent.httpReqsCount, 1);
+                assert.equal(sent.dataReceivedCount, 5000);
+                assert.equal(sent.vusValue, 5);
                 const login = sent.groups.find((g) => g.path === '::Login');
-                expect(login).toBeTruthy();
-                expect(login.http_req_duration.avg).toBe(150);
-                expect(login.checks).toEqual({ passed: 0, failed: 0 });
+                assert.ok(login);
+                assert.equal(login.http_req_duration.avg, 150);
+                assert.deepEqual(login.checks, { passed: 0, failed: 0 });
             } finally {
                 fs.unlinkSync(tmpFile);
             }
@@ -751,15 +756,15 @@ describe('K6MetricsService', () => {
             fs.writeFileSync(tmpFile, lines.map((l) => JSON.stringify(l)).join('\n'));
 
             try {
-                vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-                vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 7 } });
+                mock.method(service, 'generateToken', async () => 'mock-token');
+                mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 7 } }));
 
                 await service.sendK6Metrics(mockSummary, { samplesPath: tmpFile });
 
-                const sent = service.sendPOSTRequest.mock.calls[0][1];
+                const sent = service.sendPOSTRequest.mock.calls[0].arguments[1];
                 const login = sent.groups.find((g) => g.path === '::Login');
-                expect(login.http_req_duration.avg).toBe(200);
-                expect(login.http_req_duration.p90).toBe(300);
+                assert.equal(login.http_req_duration.avg, 200);
+                assert.equal(login.http_req_duration.p90, 300);
             } finally {
                 fs.unlinkSync(tmpFile);
             }
@@ -777,18 +782,18 @@ describe('K6MetricsService', () => {
             fs.writeFileSync(tmpFile, lines.map((l) => JSON.stringify(l)).join('\n'));
 
             try {
-                vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-                vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 11 } });
+                mock.method(service, 'generateToken', async () => 'mock-token');
+                mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 11 } }));
 
                 await service.sendK6Metrics(mockSummary, { samplesPath: tmpFile });
 
-                const sent = service.sendPOSTRequest.mock.calls[0][1];
-                expect(sent.endpoints).toHaveLength(2);
+                const sent = service.sendPOSTRequest.mock.calls[0].arguments[1];
+                assert.equal(sent.endpoints.length, 2);
                 const auth = sent.endpoints.find((e) => e.name === '/auth');
-                expect(auth.method).toBe('POST');
-                expect(auth.group).toBe('::Login');
-                expect(auth.http_req_duration.avg).toBe(150);
-                expect(auth.statuses).toEqual({ 200: 2 });
+                assert.equal(auth.method, 'POST');
+                assert.equal(auth.group, '::Login');
+                assert.equal(auth.http_req_duration.avg, 150);
+                assert.deepEqual(auth.statuses, { 200: 2 });
             } finally {
                 fs.unlinkSync(tmpFile);
             }

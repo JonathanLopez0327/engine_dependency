@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import assert from 'node:assert/strict';
 import { AuthenticatedService } from '../src/services/authenticated.service.js';
 
 describe('AuthenticatedService', () => {
@@ -11,20 +12,21 @@ describe('AuthenticatedService', () => {
             serviceAccount: 'test@test.com',
             servicePassword: 'password'
         });
-        vi.spyOn(console, 'log').mockImplementation(() => { });
-        vi.spyOn(console, 'error').mockImplementation(() => { });
+        mock.method(console, 'log', () => { });
+        mock.method(console, 'error', () => { });
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        mock.restoreAll();
+        mock.reset();
     });
 
     describe('constructor', () => {
         it('debe aceptar configuracion por parametro', () => {
-            expect(service.baseUrl).toBe('https://api.test.com');
-            expect(service.tokenEndpoint).toBe('/auth/login');
-            expect(service.serviceAccount).toBe('test@test.com');
-            expect(service.servicePassword).toBe('password');
+            assert.equal(service.baseUrl, 'https://api.test.com');
+            assert.equal(service.tokenEndpoint, '/auth/login');
+            assert.equal(service.serviceAccount, 'test@test.com');
+            assert.equal(service.servicePassword, 'password');
         });
 
         it('debe leer desde variables de entorno cuando no hay config', () => {
@@ -35,10 +37,10 @@ describe('AuthenticatedService', () => {
 
             const s = new AuthenticatedService();
 
-            expect(s.baseUrl).toBe('https://env.test.com');
-            expect(s.tokenEndpoint).toBe('/env/token');
-            expect(s.serviceAccount).toBe('env@test.com');
-            expect(s.servicePassword).toBe('envpassword');
+            assert.equal(s.baseUrl, 'https://env.test.com');
+            assert.equal(s.tokenEndpoint, '/env/token');
+            assert.equal(s.serviceAccount, 'env@test.com');
+            assert.equal(s.servicePassword, 'envpassword');
 
             delete process.env.DATA_ENGINE_BASE_URL;
             delete process.env.DATA_ENGINE_GENERATE_TOKEN;
@@ -49,26 +51,26 @@ describe('AuthenticatedService', () => {
 
     describe('generateToken', () => {
         it('debe retornar el token cuando la peticion es exitosa', async () => {
-            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({
+            mock.method(service, 'sendPOSTRequest', async () => ({
                 data: { token: 'mock-token-123' }
-            });
+            }));
 
             const token = await service.generateToken();
 
-            expect(token).toBe('mock-token-123');
-            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
+            assert.equal(token, 'mock-token-123');
+            assert.deepEqual(service.sendPOSTRequest.mock.calls[0].arguments, [
                 'https://api.test.com/auth/login',
                 { email: 'test@test.com', password: 'password' }
-            );
+            ]);
         });
 
         it('debe retornar undefined cuando falla la peticion', async () => {
-            vi.spyOn(service, 'sendPOSTRequest').mockRejectedValue(new Error('Network error'));
+            mock.method(service, 'sendPOSTRequest', async () => { throw new Error('Network error'); });
 
             const token = await service.generateToken();
 
-            expect(token).toBeUndefined();
-            expect(console.error).toHaveBeenCalled();
+            assert.equal(token, undefined);
+            assert.ok(console.error.mock.calls.length > 0);
         });
     });
 });

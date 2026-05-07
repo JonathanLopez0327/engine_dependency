@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import assert from 'node:assert/strict';
 import { TestInformationService } from '../src/services/test-information.service.js';
 
 const mockTestInfo = {
@@ -28,27 +29,28 @@ describe('TestInformationService', () => {
             serviceAccount: 'test@test.com',
             servicePassword: 'password'
         });
-        vi.spyOn(console, 'log').mockImplementation(() => { });
-        vi.spyOn(console, 'error').mockImplementation(() => { });
+        mock.method(console, 'log', () => { });
+        mock.method(console, 'error', () => { });
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        mock.restoreAll();
+        mock.reset();
         delete process.env.CI;
     });
 
     describe('constructor', () => {
         it('debe aceptar configuracion por parametro', () => {
-            expect(service.baseUrl).toBe('https://api.test.com');
-            expect(service.tokenEndpoint).toBe('/auth/login');
-            expect(service.serviceAccount).toBe('test@test.com');
-            expect(service.servicePassword).toBe('password');
-            expect(service.testResultsEndpoint).toBe('/api/test-results');
+            assert.equal(service.baseUrl, 'https://api.test.com');
+            assert.equal(service.tokenEndpoint, '/auth/login');
+            assert.equal(service.serviceAccount, 'test@test.com');
+            assert.equal(service.servicePassword, 'password');
+            assert.equal(service.testResultsEndpoint, '/api/test-results');
         });
 
         it('debe usar valores por defecto del endpoint de test results', () => {
             const s = new TestInformationService({});
-            expect(s.testResultsEndpoint).toBe('/api/test-results');
+            assert.equal(s.testResultsEndpoint, '/api/test-results');
         });
     });
 
@@ -56,21 +58,21 @@ describe('TestInformationService', () => {
         it('debe construir el payload correctamente', () => {
             const payload = service.buildTestPayload(mockTestInfo);
 
-            expect(payload.testTitle).toBe('Login exitoso');
-            expect(payload.testStatus).toBe('passed');
-            expect(payload.duration).toBe(3500);
-            expect(payload.testFile).toBe('tests/auth/login.spec.js');
-            expect(payload.retries).toBe(0);
-            expect(payload.tags).toEqual(['@smoke']);
-            expect(payload.testInfo.title).toBe('Login exitoso');
-            expect(payload.testInfo.annotations).toEqual([]);
+            assert.equal(payload.testTitle, 'Login exitoso');
+            assert.equal(payload.testStatus, 'passed');
+            assert.equal(payload.duration, 3500);
+            assert.equal(payload.testFile, 'tests/auth/login.spec.js');
+            assert.equal(payload.retries, 0);
+            assert.deepEqual(payload.tags, ['@smoke']);
+            assert.equal(payload.testInfo.title, 'Login exitoso');
+            assert.deepEqual(payload.testInfo.annotations, []);
         });
 
         it('debe usar title cuando titlePath no existe', () => {
             const info = { ...mockTestInfo, titlePath: undefined };
             const payload = service.buildTestPayload(info);
 
-            expect(payload.testTitle).toBe('Login exitoso');
+            assert.equal(payload.testTitle, 'Login exitoso');
         });
     });
 
@@ -78,101 +80,99 @@ describe('TestInformationService', () => {
         it('debe construir el payload correctamente para WDIO', () => {
             const payload = service.buildTestPayloadForWDIO(mockTestInfo);
 
-            expect(payload.testTitle).toBe('Login exitoso');
-            expect(payload.testStatus).toBe('passed');
-            expect(payload.duration).toBe(3500);
-            expect(payload.testFile).toBe('tests/auth/login.spec.js');
-            expect(payload.retries).toBe(0);
-            expect(payload.tags).toEqual(['@smoke']);
-            expect(payload.testInfo).toEqual({});
+            assert.equal(payload.testTitle, 'Login exitoso');
+            assert.equal(payload.testStatus, 'passed');
+            assert.equal(payload.duration, 3500);
+            assert.equal(payload.testFile, 'tests/auth/login.spec.js');
+            assert.equal(payload.retries, 0);
+            assert.deepEqual(payload.tags, ['@smoke']);
+            assert.deepEqual(payload.testInfo, {});
         });
     });
 
     describe('generateToken', () => {
         it('debe retornar el token cuando la peticion es exitosa', async () => {
-            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({
+            mock.method(service, 'sendPOSTRequest', async () => ({
                 data: { token: 'mock-token-123' }
-            });
+            }));
 
             const token = await service.generateToken();
 
-            expect(token).toBe('mock-token-123');
-            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
+            assert.equal(token, 'mock-token-123');
+            assert.deepEqual(service.sendPOSTRequest.mock.calls[0].arguments, [
                 'https://api.test.com/auth/login',
                 { email: 'test@test.com', password: 'password' }
-            );
+            ]);
         });
 
         it('debe retornar undefined cuando falla la peticion', async () => {
-            vi.spyOn(service, 'sendPOSTRequest').mockRejectedValue(new Error('Network error'));
+            mock.method(service, 'sendPOSTRequest', async () => { throw new Error('Network error'); });
 
             const token = await service.generateToken();
 
-            expect(token).toBeUndefined();
-            expect(console.error).toHaveBeenCalled();
+            assert.equal(token, undefined);
+            assert.ok(console.error.mock.calls.length > 0);
         });
     });
 
     describe('sendTestResult', () => {
         it('debe no ejecutarse si CI no esta definido', async () => {
             delete process.env.CI;
-            vi.spyOn(service, 'generateToken');
+            const tokenSpy = mock.method(service, 'generateToken', service.generateToken);
 
             const result = await service.sendTestResult(mockTestInfo);
 
-            expect(result).toBeUndefined();
-            expect(service.generateToken).not.toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.equal(tokenSpy.mock.calls.length, 0);
         });
 
         it('debe enviar el resultado cuando CI esta activo', async () => {
             process.env.CI = 'true';
-            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 1 } });
+            mock.method(service, 'generateToken', async () => 'mock-token');
+            mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 1 } }));
 
             const result = await service.sendTestResult(mockTestInfo);
 
-            expect(result).toEqual({ id: 1 });
-            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
-                'https://api.test.com/api/test-results',
-                expect.any(Object),
-                { Authorization: 'Bearer mock-token' }
-            );
+            assert.deepEqual(result, { id: 1 });
+            const args = service.sendPOSTRequest.mock.calls[0].arguments;
+            assert.equal(args[0], 'https://api.test.com/api/test-results');
+            assert.ok(args[1] && typeof args[1] === 'object');
+            assert.deepEqual(args[2], { Authorization: 'Bearer mock-token' });
         });
 
         it('debe retornar undefined si no obtiene token', async () => {
             process.env.CI = 'true';
-            vi.spyOn(service, 'generateToken').mockResolvedValue(undefined);
+            mock.method(service, 'generateToken', async () => undefined);
 
             const result = await service.sendTestResult(mockTestInfo);
 
-            expect(result).toBeUndefined();
+            assert.equal(result, undefined);
         });
     });
 
     describe('sendWDIOTestResult', () => {
         it('debe no ejecutarse si CI no esta definido', async () => {
             delete process.env.CI;
-            vi.spyOn(service, 'generateToken');
+            const tokenSpy = mock.method(service, 'generateToken', service.generateToken);
 
             const result = await service.sendWDIOTestResult(mockTestInfo);
 
-            expect(result).toBeUndefined();
-            expect(service.generateToken).not.toHaveBeenCalled();
+            assert.equal(result, undefined);
+            assert.equal(tokenSpy.mock.calls.length, 0);
         });
 
         it('debe enviar el resultado cuando CI esta activo', async () => {
             process.env.CI = 'true';
-            vi.spyOn(service, 'generateToken').mockResolvedValue('mock-token');
-            vi.spyOn(service, 'sendPOSTRequest').mockResolvedValue({ data: { id: 1 } });
+            mock.method(service, 'generateToken', async () => 'mock-token');
+            mock.method(service, 'sendPOSTRequest', async () => ({ data: { id: 1 } }));
 
             const result = await service.sendWDIOTestResult(mockTestInfo);
 
-            expect(result).toEqual({ id: 1 });
-            expect(service.sendPOSTRequest).toHaveBeenCalledWith(
-                'https://api.test.com/api/test-results',
-                expect.any(Object),
-                { Authorization: 'Bearer mock-token' }
-            );
+            assert.deepEqual(result, { id: 1 });
+            const args = service.sendPOSTRequest.mock.calls[0].arguments;
+            assert.equal(args[0], 'https://api.test.com/api/test-results');
+            assert.ok(args[1] && typeof args[1] === 'object');
+            assert.deepEqual(args[2], { Authorization: 'Bearer mock-token' });
         });
     });
 });
