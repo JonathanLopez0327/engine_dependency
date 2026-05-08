@@ -90,7 +90,8 @@ const flattenGroups = (rootGroup) => {
  */
 const ingestSample = (buckets, s) => {
     if (s?.type !== 'Point') return;
-    const groupPath = s.data?.tags?.group;
+    const tags = s.data?.tags || {};
+    const groupPath = tags.group;
     if (!groupPath) return;
 
     const bucket = (buckets[groupPath] ??= {
@@ -99,7 +100,8 @@ const ingestSample = (buckets, s) => {
         groupDurations: [],
         failedTotal: 0,
         failedSum: 0,
-        reqsCount: 0
+        reqsCount: 0,
+        endpoints: new Map()
     });
 
     const value = s.data?.value;
@@ -121,11 +123,55 @@ const ingestSample = (buckets, s) => {
             bucket.reqsCount += value ?? 1;
             break;
     }
+
+    const epName = tags.name || tags.url;
+    if (!epName) return;
+    const method = tags.method || 'GET';
+    const epKey = `${method} ${epName}`;
+    let ep = bucket.endpoints.get(epKey);
+    if (!ep) {
+        ep = {
+            method,
+            name: tags.name || tags.url,
+            url: tags.url || null,
+            durations: [],
+            failedTotal: 0,
+            failedSum: 0,
+            reqsCount: 0
+        };
+        bucket.endpoints.set(epKey, ep);
+    }
+
+    switch (s.metric) {
+        case 'http_req_duration':
+            if (typeof value === 'number') ep.durations.push(value);
+            break;
+        case 'http_req_failed':
+            ep.failedTotal += 1;
+            ep.failedSum += value ?? 0;
+            break;
+        case 'http_reqs':
+            ep.reqsCount += value ?? 1;
+            break;
+    }
 };
 
 const finalizeBuckets = (buckets) => {
     const result = {};
     for (const [path, b] of Object.entries(buckets)) {
+        const endpoints = b.endpoints
+            ? Array.from(b.endpoints.values()).map((ep) => ({
+                method: ep.method,
+                name: ep.name,
+                url: ep.url,
+                http_req_duration: computeTrend(ep.durations),
+                http_req_failed: {
+                    rate: ep.failedTotal > 0 ? ep.failedSum / ep.failedTotal : null
+                },
+                http_reqs: { count: ep.reqsCount }
+            }))
+            : [];
+
         result[path] = {
             http_req_duration: computeTrend(b.durations),
             http_req_waiting: computeTrend(b.waitings),
@@ -133,7 +179,8 @@ const finalizeBuckets = (buckets) => {
             http_req_failed: {
                 rate: b.failedTotal > 0 ? b.failedSum / b.failedTotal : null
             },
-            http_reqs: { count: b.reqsCount }
+            http_reqs: { count: b.reqsCount },
+            endpoints
         };
     }
     return result;

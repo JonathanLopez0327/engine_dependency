@@ -498,6 +498,55 @@ describe('K6MetricsService', () => {
 
             assert.deepEqual(result, {});
         });
+
+        it('debe desglosar endpoints por grupo cuando los samples traen tags.name', () => {
+            const samples = [
+                { type: 'Point', metric: 'http_req_duration', data: { value: 100, tags: { group: '::Login', name: '/auth', method: 'POST' } } },
+                { type: 'Point', metric: 'http_req_duration', data: { value: 200, tags: { group: '::Login', name: '/auth', method: 'POST' } } },
+                { type: 'Point', metric: 'http_req_failed',   data: { value: 0,   tags: { group: '::Login', name: '/auth', method: 'POST' } } },
+                { type: 'Point', metric: 'http_req_failed',   data: { value: 1,   tags: { group: '::Login', name: '/auth', method: 'POST' } } },
+                { type: 'Point', metric: 'http_reqs',         data: { value: 1,   tags: { group: '::Login', name: '/auth', method: 'POST' } } }
+            ];
+
+            const result = aggregateK6Samples(samples);
+
+            assert.equal(result['::Login'].endpoints.length, 1);
+            const ep = result['::Login'].endpoints[0];
+            assert.equal(ep.method, 'POST');
+            assert.equal(ep.name, '/auth');
+            assert.equal(ep.http_req_duration.avg, 150);
+            assert.equal(ep.http_req_failed.rate, 0.5);
+            assert.equal(ep.http_reqs.count, 1);
+        });
+
+        it('mismo endpoint en dos grupos debe aparecer en ambos con metricas independientes', () => {
+            const samples = [
+                { type: 'Point', metric: 'http_req_duration', data: { value: 100, tags: { group: '::A', name: '/users', method: 'GET' } } },
+                { type: 'Point', metric: 'http_reqs',         data: { value: 1,   tags: { group: '::A', name: '/users', method: 'GET' } } },
+                { type: 'Point', metric: 'http_req_duration', data: { value: 500, tags: { group: '::B', name: '/users', method: 'GET' } } },
+                { type: 'Point', metric: 'http_reqs',         data: { value: 1,   tags: { group: '::B', name: '/users', method: 'GET' } } }
+            ];
+
+            const result = aggregateK6Samples(samples);
+
+            assert.equal(result['::A'].endpoints.length, 1);
+            assert.equal(result['::B'].endpoints.length, 1);
+            assert.equal(result['::A'].endpoints[0].http_req_duration.avg, 100);
+            assert.equal(result['::B'].endpoints[0].http_req_duration.avg, 500);
+            assert.equal(result['::A'].endpoints[0].http_reqs.count, 1);
+            assert.equal(result['::B'].endpoints[0].http_reqs.count, 1);
+        });
+
+        it('debe dejar endpoints: [] cuando los samples del grupo no traen name ni url', () => {
+            const samples = [
+                { type: 'Point', metric: 'http_req_duration', data: { value: 100, tags: { group: '::Solo' } } },
+                { type: 'Point', metric: 'http_reqs',         data: { value: 1,   tags: { group: '::Solo' } } }
+            ];
+
+            const result = aggregateK6Samples(samples);
+
+            assert.deepEqual(result['::Solo'].endpoints, []);
+        });
     });
 
     describe('aggregateK6SamplesFromFile', () => {
