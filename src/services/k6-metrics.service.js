@@ -555,7 +555,8 @@ export class K6MetricsService extends AuthenticatedService {
                 name: g.name,
                 path: g.path,
                 checks: g.checks,
-                http_req_duration: gm.http_req_duration ? flattenTrendBare(gm.http_req_duration) : null
+                http_req_duration: gm.http_req_duration ? flattenTrendBare(gm.http_req_duration) : null,
+                endpoints: Array.isArray(gm.endpoints) ? gm.endpoints : []
             };
         });
 

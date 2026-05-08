@@ -355,6 +355,42 @@ describe('K6MetricsService', () => {
             });
             assert.equal(checkout.http_req_duration, null);
         });
+
+        it('debe propagar endpoints por grupo desde groupMetrics al payload', () => {
+            const groupMetrics = {
+                '::Login': {
+                    http_req_duration: { avg: 100, min: 50, max: 200, med: 90, 'p(90)': 150, 'p(95)': 180, 'p(99)': 195 },
+                    endpoints: [
+                        {
+                            method: 'POST',
+                            name: '/auth',
+                            url: null,
+                            http_req_duration: { avg: 150, min: 100, max: 200, med: 150, 'p(90)': 190, 'p(95)': 195, 'p(99)': 199 },
+                            http_req_failed: { rate: 0.5 },
+                            http_reqs: { count: 1 }
+                        }
+                    ]
+                }
+            };
+
+            const payload = service.buildK6Payload(mockSummary, { groupMetrics });
+            const login = payload.groups.find((g) => g.path === '::Login');
+            const checkout = payload.groups.find((g) => g.path === '::Checkout');
+
+            assert.equal(login.endpoints.length, 1);
+            assert.equal(login.endpoints[0].method, 'POST');
+            assert.equal(login.endpoints[0].name, '/auth');
+            assert.equal(login.endpoints[0].http_req_failed.rate, 0.5);
+            assert.equal(login.endpoints[0].http_reqs.count, 1);
+            assert.deepEqual(checkout.endpoints, []);
+        });
+
+        it('debe dejar endpoints: [] cuando groupMetrics no trae el campo', () => {
+            const payload = service.buildK6Payload(mockSummary);
+            for (const g of payload.groups) {
+                assert.deepEqual(g.endpoints, []);
+            }
+        });
     });
 
     describe('endpoints', () => {
